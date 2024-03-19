@@ -1,0 +1,26 @@
+{% extends 'base.html' %}
+
+{% block title %}
+    Meme Explorer
+{% endblock %}
+
+
+{% block header %}
+    <h1>Welcome to Meme Explorer</h1>
+{% endblock %}
+
+{% block content %}
+<h1 class="text-3xl">50 random memes</h1>
+<div id="similar-memes" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mx-auto justify-center m-10">
+
+{% for image in images %}
+
+<a href="/meme/{{image}}">
+    <img class="w-64 border m-5" src="/meme-img/{{ image }}" alt="meme"  style="margin: 10px;">
+</a>
+{% endfor %}
+</div>
+{% endblock %}
+
+{% block js %}
+{% endblock %}

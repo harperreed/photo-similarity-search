@@ -1,0 +1,2367 @@
+Repository Documentation
+This document provides a comprehensive overview of the repository's structure and contents.
+The first section, titled 'Directory/File Tree', displays the repository's hierarchy in a tree format.
+In this section, directories and files are listed using tree branches to indicate their structure and relationships.
+Following the tree representation, the 'File Content' section details the contents of each file in the repository.
+Each file's content is introduced with a '[File Begins]' marker followed by the file's relative path,
+and the content is displayed verbatim. The end of each file's content is marked with a '[File Ends]' marker.
+This format ensures a clear and orderly presentation of both the structure and the detailed contents of the repository.
+
+Directory/File Tree Begins -->
+
+./
+├── 01e63c7b-536c-5edd-a3ab-71685e63d9f7_filelist_cache.pkl
+├── combined_v1.py
+├── combined_v2.py
+├── combined_v3.py
+├── combined_v4.py
+├── combined_v5.py
+├── fix_cache 3.py
+├── fix_cache.py
+├── generate_cache.py
+├── generate_chroma_db.py
+├── generate_db.py
+├── generate_embeddings_chroma.py
+├── generate_embeddings_db.py
+├── load_embeddings_into_chromadb.py
+├── requirements.txt
+├── tag.py
+├── templates
+│   ├── base.html
+│   ├── display_meme.html
+│   ├── index.html
+│   └── query_results.html
+├── test-uuid.py
+└── webs.py
+
+<-- Directory/File Tree Ends
+
+File Content Begin -->
+[File Begins] 01e63c7b-536c-5edd-a3ab-71685e63d9f7_filelist_cache.pkl
+}.
+[File Ends] 01e63c7b-536c-5edd-a3ab-71685e63d9f7_filelist_cache.pkl
+
+[File Begins] combined_v1.py
+import os
+import pickle
+import socket
+import uuid
+import logging
+import time
+import sqlite3
+import hashlib
+import json
+from dotenv import load_dotenv
+from PIL import Image
+from io import BytesIO
+import requests
+import signal
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Load environment variables
+load_dotenv()
+
+# Global variables
+host_name = socket.gethostname()
+unique_id = uuid.uuid5(uuid.NAMESPACE_DNS, host_name + str(uuid.getnode()))
+data_path = os.getenv('DATA_DIR', './')
+image_directory = os.getenv('IMAGE_DIRECTORY', 'images')
+cache_filename = os.getenv('CACHE_FILENAME', 'filelist_cache.pkl')
+sqlite_db_filename = os.getenv('DB_FILENAME', 'images.db')
+embedding_server_url = os.getenv('EMBEDDING_SERVER')
+
+# File paths
+cache_file_path = os.path.join(data_path, f"{unique_id}_{cache_filename}")
+sqlite_db_filepath = os.path.join(data_path, f"{unique_id}_{sqlite_db_filename}")
+
+# Database connection setup
+def setup_database_connection():
+    try:
+        conn = sqlite3.connect(sqlite_db_filepath)
+        cursor = conn.cursor()
+        logging.info(f"Connected to the SQLite database at {sqlite_db_filepath}.")
+        return conn, cursor
+    except sqlite3.Error as e:
+        logging.error(f"Failed to connect to the database: {e}")
+        raise
+
+# Graceful shutdown handler
+def graceful_shutdown(signum, frame, conn=None):
+    logging.info("Caught signal, shutting down gracefully...")
+    if conn:
+        conn.commit()
+        conn.close()
+        logging.info("Database connection closed after committing changes.")
+    exit(0)
+
+# Create or ensure the existence of database table
+def ensure_database_table(cursor):
+    try:
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS images (
+            id INTEGER PRIMARY KEY,
+            filename TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            file_date TEXT NOT NULL,
+            file_md5 TEXT NOT NULL,
+            embeddings BLOB
+        )
+        ''')
+        logging.info("Table 'images' ensured to exist.")
+    except sqlite3.Error as e:
+        logging.error(f"Failed to ensure the 'images' table exists: {e}")
+        raise
+
+# Generate or load file cache
+def generate_or_load_file_cache():
+    if os.path.exists(cache_file_path):
+        with open(cache_file_path, 'rb') as f:
+            cached_files = pickle.load(f)
+        logging.info(f"Loaded cache with {len(cached_files)} files from {cache_file_path}.")
+    else:
+        cached_files = []
+        for root, _, files in os.walk(image_directory):
+            for file in files:
+                cached_files.append(os.path.join(root, file))
+        with open(cache_file_path, 'wb') as f:
+            pickle.dump(cached_files, f)
+        logging.info(f"Generated cache with {len(cached_files)} files and saved to {cache_file_path}.")
+    return cached_files
+
+# File processing and database update
+def process_files_and_update_db(cached_files, cursor, conn):
+    for file_path in cached_files:
+        if not file_path.lower().endswith('.jpg'):
+            continue
+        file_name = os.path.basename(file_path)
+        file_date = time.ctime(os.path.getmtime(file_path))
+        file_md5 = hashlib.md5(open(file_path, 'rb').read()).hexdigest()
+
+        cursor.execute("SELECT id FROM images WHERE filename=? AND file_md5=?", (file_name, file_md5))
+        if cursor.fetchone():
+            logging.info(f"File {file_name} already in database. Skipping.")
+            continue
+
+        embeddings = upload_and_get_embeddings(file_path)
+        if embeddings:
+            cursor.execute("INSERT INTO images (filename, file_path, file_date, file_md5, embeddings) VALUES (?, ?, ?, ?, ?)",
+                           (file_name, file_path, file_date, file_md5, json.dumps(embeddings)))
+            conn.commit()
+            logging.info(f"Inserted {file_name} into database with embeddings.")
+        else:
+            logging.error(f"Failed to process embeddings for {file_name}. Skipping insertion.")
+
+# Upload image and get embeddings
+def upload_and_get_embeddings(image_path):
+    try:
+        with Image.open(image_path) as img:
+            aspect_ratio = img.height / img.width
+            new_height = int(1024 * aspect_ratio)
+            img = img.resize((1024, new_height), Image.ANTIALIAS)
+            # Save the resized image to a buffer
+            buffer = BytesIO()
+            img_format = 'JPEG' if img.format == 'JPEG' else 'PNG'
+            img.save(buffer, format=img_format)
+            buffer.seek(0)
+
+            # Send the image to the embedding server
+            files = {'image': (os.path.basename(image_path), buffer, img_format)}
+            response = requests.post(embedding_server_url, files=files)
+            response.raise_for_status()  # This will raise an HTTPError for unsuccessful status codes
+
+            # If successful, return the embeddings from the response
+            logging.info(f"Successfully uploaded {image_path} for embeddings.")
+            return response.json().get('embeddings', [])
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Error during the request to the embedding server for {image_path}: {e}")
+    except Exception as e:
+        logging.error(f"Unexpected error occurred while processing embeddings for {image_path}: {e}")
+    return None
+
+def main():
+    # Register signal handlers for graceful shutdown
+    signal.signal(signal.SIGINT, lambda signum, frame: graceful_shutdown(signum, frame, conn=None))
+    signal.signal(signal.SIGTERM, lambda signum, frame: graceful_shutdown(signum, frame, conn=None))
+
+    try:
+        # Setup database connection and ensure table exists
+        conn, cursor = setup_database_connection()
+        ensure_database_table(cursor)
+
+        # Modify the graceful shutdown to close the database connection properly
+        signal.signal(signal.SIGINT, lambda signum, frame: graceful_shutdown(signum, frame, conn=conn))
+        signal.signal(signal.SIGTERM, lambda signum, frame: graceful_shutdown(signum, frame, conn=conn))
+
+        # Generate or load file cache
+        cached_files = generate_or_load_file_cache()
+
+        # Process files and update the database
+        process_files_and_update_db(cached_files, cursor, conn)
+
+        logging.info("All operations completed successfully.")
+    except Exception as e:
+        logging.error(f"An error occurred during script execution: {e}")
+    finally:
+        if 'conn' in globals() and conn:
+            conn.close()
+            logging.info("Database connection closed.")
+
+if __name__ == "__main__":
+    main()
+
+[File Ends] combined_v1.py
+
+[File Begins] combined_v2.py
+import os
+import pickle
+import socket
+import uuid
+import logging
+import time
+from dotenv import load_dotenv
+import sqlite3
+import hashlib
+import requests
+from PIL import Image
+from io import BytesIO
+import signal
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Load environment variables
+load_dotenv()
+
+# Generate unique ID for the machine
+host_name = socket.gethostname()
+unique_id = uuid.uuid5(uuid.NAMESPACE_DNS, host_name + str(uuid.getnode()))
+logging.info(f"Running on machine ID: {unique_id}")
+
+# Retrieve values from .env
+data_path = os.getenv('DATA_DIR', './')
+sqlite_db_filename = os.getenv('DB_FILENAME', 'images.db')
+filelist_cache_filename = os.getenv('CACHE_FILENAME', 'filelist_cache.pkl')
+directory = os.getenv('IMAGE_DIRECTORY', 'images')
+embedding_server_url = os.getenv('EMBEDDING_SERVER')
+
+# Append the unique ID to the db file path and cache file path
+sqlite_db_filepath = f"{data_path}{str(unique_id)}_{sqlite_db_filename}"
+filelist_cache_filepath = os.path.join(data_path, f"{unique_id}_{filelist_cache_filename}")
+
+# Graceful shutdown handler
+def graceful_shutdown(signum, frame):
+    logging.info("Caught signal, shutting down gracefully...")
+    if 'conn' in globals():
+        conn.commit()
+        conn.close()
+        logging.info("Database connection closed after committing changes.")
+    exit(0)
+
+# Register the signal handlers for graceful shutdown
+signal.signal(signal.SIGINT, graceful_shutdown)
+signal.signal(signal.SIGTERM, graceful_shutdown)
+
+# Connect to the SQLite database
+conn = sqlite3.connect(sqlite_db_filepath)
+cursor = conn.cursor()
+
+# Create the images table if it doesn't exist
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS images (
+        id INTEGER PRIMARY KEY,
+        filename TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        file_date TEXT NOT NULL,
+        file_md5 TEXT NOT NULL,
+        embeddings BLOB
+    )
+''')
+logging.info("Table 'images' ensured to exist.")
+
+def file_generator(directory):
+    for root, _, files in os.walk(directory):
+        for file in files:
+            yield os.path.join(root, file)
+
+def hydrate_cache(directory, cache_file_path):
+    logging.info(f"Cache file not found at {cache_file_path}. Creating cache dirlist for {directory}...")
+    cached_files = list(file_generator(directory))
+    with open(cache_file_path, 'wb') as f:
+        pickle.dump(cached_files, f)
+    logging.info(f"Created cache with {len(cached_files)} files and dumped to {cache_file_path}")
+    return cached_files
+
+def upload_embeddings(image_path):
+    try:
+        with Image.open(image_path) as img:
+            aspect_ratio = img.height / img.width
+            new_height = int(1024 * aspect_ratio)
+            img = img.resize((1024, new_height), Image.Resampling.LANCZOS)
+            buffer = BytesIO()
+            img_format = 'JPEG' if img.format == 'JPEG' else 'PNG'
+            img.save(buffer, format=img_format)
+            buffer.seek(0)
+            files = {'image': (os.path.basename(image_path), buffer)}
+            response = requests.post(embedding_server_url, files=files)
+            response.raise_for_status()
+        logging.debug(f"Embeddings uploaded successfully for {image_path}")
+        return response
+    except Exception as e:
+        logging.error(f"An error occurred while uploading embeddings for {image_path}: {e}")
+        return None
+
+def update_db(image):
+    try:
+        embeddings_blob = sqlite3.Binary(pickle.dumps(image.get('embeddings', [])))
+        cursor.execute("UPDATE images SET embeddings = ? WHERE filename = ?",
+                       (embeddings_blob, image['filename']))
+        conn.commit()
+        logging.debug(f"Database updated successfully for image: {image['filename']}")
+    except sqlite3.Error as e:
+        logging.error(f"Database update failed for image: {image['filename']}. Error: {e}")
+
+def process_image(file_path):
+    file = os.path.basename(file_path)
+    file_date = time.ctime(os.path.getmtime(file_path))
+    with open(file_path, 'rb') as f:
+        file_content = f.read()
+    file_md5 = hashlib.md5(file_content).hexdigest()
+
+    cursor.execute('''
+        SELECT EXISTS(SELECT 1 FROM images WHERE filename=? AND file_path=? LIMIT 1)
+    ''', (file, file_path))
+    file_exists = cursor.fetchone()[0]
+
+    if not file_exists:
+        cursor.execute('''
+            INSERT INTO images (filename, file_path, file_date, file_md5)
+            VALUES (?, ?, ?, ?)
+        ''', (file, file_path, file_date, file_md5))
+        logging.info(f'Inserted {file} with metadata into the database.')
+    else:
+        logging.info(f'File {file} already exists in the database. Skipping insertion.')
+
+def main():
+    cache_start_time = time.time()
+    if os.path.exists(filelist_cache_filepath):
+        with open(filelist_cache_filepath, 'rb') as f:
+            cached_files = pickle.load(f)
+        logging.info(f"Loaded cached files from {filelist_cache_filepath}")
+    else:
+        cached_files = hydrate_cache(directory, filelist_cache_filepath)
+
+    cache_end_time = time.time()
+    logging.info(f"Cache operation took {cache_end_time - cache_start_time:.2f} seconds")
+    logging.info(f"Directory has {len(cached_files)} files")
+
+    commit_counter = 0
+    commit_threshold = 100
+
+    for file_path in cached_files:
+        if file_path.lower().endswith('.jpg'):
+            process_image(file_path)
+            commit_counter += 1
+            if commit_counter >= commit_threshold:
+                conn.commit()
+                logging.info(f"Committed {commit_counter} changes to the database.")
+                commit_counter = 0
+
+    conn.commit()
+
+    cursor.execute("SELECT filename, file_path, file_date, file_md5, embeddings FROM images")
+    photos = [{'filename': row[0], 'file_path': row[1], 'file_date': row[2], 'file_md5': row[3], 'embeddings': pickle.loads(row[4]) if row[4] else []} for row in cursor.fetchall()]
+    logging.info(f"Loaded {len(photos)} photos from database")
+
+    for i, photo in enumerate(photos, start=1):
+        logging.info(f"Processing photo {i}/{len(photos)}: {photo['filename']}")
+        if photo['embeddings']:
+            logging.info(f"Photo {photo['filename']} already has embeddings. Skipping.")
+            continue
+        start_time = time.time()
+        response = upload_embeddings(photo['file_path'])
+        end_time = time.time()
+        if response and response.status_code == 200:
+            photo['embeddings'] = response.json().get('embeddings', [])
+            update_db(photo)
+            logging.info(f"[{i}/{len(photos)}] Grabbed embeddings for {photo['filename']} in {end_time - start_time:.2f} seconds")
+        else:
+            logging.error(f"Failed to grab embeddings for {photo['filename']}. Status code: {response.status_code if response else 'N/A'}")
+
+    conn.close()
+    logging.info("Database connection closed.")
+
+if __name__ == "__main__":
+    main()
+
+[File Ends] combined_v2.py
+
+[File Begins] combined_v3.py
+import os
+import msgpack
+import socket
+import uuid
+import logging
+import time
+from dotenv import load_dotenv
+import sqlite3
+import hashlib
+import requests
+from PIL import Image
+from io import BytesIO
+import signal
+from concurrent.futures import ThreadPoolExecutor
+from logging.handlers import RotatingFileHandler
+
+# Configure logging
+handler = RotatingFileHandler('app.log', maxBytes=10485760, backupCount=10)
+handler.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+handler.setFormatter(formatter)
+
+logger = logging.getLogger('app')
+logger.setLevel(logging.INFO)
+logger.addHandler(handler)
+
+# Load environment variables
+load_dotenv()
+
+# Generate unique ID for the machine
+host_name = socket.gethostname()
+unique_id = uuid.uuid5(uuid.NAMESPACE_DNS, host_name + str(uuid.getnode()))
+logger.info(f"Running on machine ID: {unique_id}")
+
+# Retrieve values from .env
+data_path = os.getenv('DATA_DIR', './')
+sqlite_db_filename = os.getenv('DB_FILENAME', 'images.db')
+filelist_cache_filename = os.getenv('CACHE_FILENAME', 'filelist_cache.msgpack')
+directory = os.getenv('IMAGE_DIRECTORY', 'images')
+embedding_server_url = os.getenv('EMBEDDING_SERVER')
+
+# Append the unique ID to the db file path and cache file path
+sqlite_db_filepath = f"{data_path}{str(unique_id)}_{sqlite_db_filename}"
+filelist_cache_filepath = os.path.join(data_path, f"{unique_id}_{filelist_cache_filename}")
+
+# Graceful shutdown handler
+def graceful_shutdown(signum, frame):
+    logger.info("Caught signal, shutting down gracefully...")
+    if 'conn' in globals():
+        conn.commit()
+        conn.close()
+        logger.info("Database connection closed after committing changes.")
+    exit(0)
+
+# Register the signal handlers for graceful shutdown
+signal.signal(signal.SIGINT, graceful_shutdown)
+signal.signal(signal.SIGTERM, graceful_shutdown)
+
+# Create a connection pool for the SQLite database
+conn_pool = sqlite3.connect(sqlite_db_filepath, check_same_thread=False)
+conn_pool.row_factory = sqlite3.Row
+
+def create_table():
+    with conn_pool:
+        conn_pool.execute('''
+            CREATE TABLE IF NOT EXISTS images (
+                id INTEGER PRIMARY KEY,
+                filename TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                file_date TEXT NOT NULL,
+                file_md5 TEXT NOT NULL,
+                embeddings BLOB
+            )
+        ''')
+        conn_pool.execute('CREATE INDEX IF NOT EXISTS idx_filename ON images (filename)')
+        conn_pool.execute('CREATE INDEX IF NOT EXISTS idx_file_path ON images (file_path)')
+    logger.info("Table 'images' ensured to exist.")
+
+create_table()
+
+def file_generator(directory):
+    for root, _, files in os.walk(directory):
+        for file in files:
+            yield os.path.join(root, file)
+
+def hydrate_cache(directory, cache_file_path):
+    if os.path.exists(cache_file_path):
+        with open(cache_file_path, 'rb') as f:
+            cached_files = msgpack.load(f)
+        logger.info(f"Loaded cached files from {cache_file_path}")
+    else:
+        logger.info(f"Cache file not found at {cache_file_path}. Creating cache dirlist for {directory}...")
+        cached_files = list(file_generator(directory))
+        with open(cache_file_path, 'wb') as f:
+            msgpack.dump(cached_files, f)
+        logger.info(f"Created cache with {len(cached_files)} files and dumped to {cache_file_path}")
+    return cached_files
+
+def upload_embeddings(image_path):
+    try:
+        with Image.open(image_path) as img:
+            aspect_ratio = img.height / img.width
+            new_height = int(1024 * aspect_ratio)
+            img = img.resize((1024, new_height), Image.LANCZOS)
+            buffer = BytesIO()
+            img_format = 'JPEG' if img.format == 'JPEG' else 'PNG'
+            img.save(buffer, format=img_format)
+            buffer.seek(0)
+            files = {'image': (os.path.basename(image_path), buffer)}
+            response = requests.post(embedding_server_url, files=files)
+            response.raise_for_status()
+        logger.debug(f"Embeddings uploaded successfully for {image_path}")
+        return response
+    except Exception as e:
+        logger.error(f"An error occurred while uploading embeddings for {image_path}: {e}")
+        return None
+
+def update_db(image):
+    try:
+        embeddings_blob = sqlite3.Binary(msgpack.dumps(image.get('embeddings', [])))
+        with conn_pool:
+            conn_pool.execute("UPDATE images SET embeddings = ? WHERE filename = ?",
+                              (embeddings_blob, image['filename']))
+        logger.debug(f"Database updated successfully for image: {image['filename']}")
+    except sqlite3.Error as e:
+        logger.error(f"Database update failed for image: {image['filename']}. Error: {e}")
+
+def process_image(file_path):
+    file = os.path.basename(file_path)
+    file_date = time.ctime(os.path.getmtime(file_path))
+    with open(file_path, 'rb') as f:
+        file_content = f.read()
+    file_md5 = hashlib.md5(file_content).hexdigest()
+
+    try:
+        with conn_pool:
+            cursor = conn_pool.cursor()
+            cursor.execute('''
+                SELECT EXISTS(SELECT 1 FROM images WHERE filename=? AND file_path=? LIMIT 1)
+            ''', (file, file_path))
+            result = cursor.fetchone()
+            file_exists = result[0] if result else False
+
+            if not file_exists:
+                cursor.execute('''
+                    INSERT INTO images (filename, file_path, file_date, file_md5)
+                    VALUES (?, ?, ?, ?)
+                ''', (file, file_path, file_date, file_md5))
+                logger.info(f'Inserted {file} with metadata into the database.')
+            else:
+                logger.info(f'File {file} already exists in the database. Skipping insertion.')
+    except sqlite3.Error as e:
+        logger.error(f'Error processing image {file}: {e}')
+
+def process_embeddings(photo):
+    logger.info(f"Processing photo: {photo['filename']}")
+    if photo['embeddings']:
+        logger.info(f"Photo {photo['filename']} already has embeddings. Skipping.")
+        return
+    start_time = time.time()
+    response = upload_embeddings(photo['file_path'])
+    end_time = time.time()
+    if response and response.status_code == 200:
+        photo['embeddings'] = response.json().get('embeddings', [])
+        update_db(photo)
+        logger.info(f"Grabbed embeddings for {photo['filename']} in {end_time - start_time:.2f} seconds")
+    else:
+        logger.error(f"Failed to grab embeddings for {photo['filename']}. Status code: {response.status_code if response else 'N/A'}")
+
+def main():
+    cache_start_time = time.time()
+    cached_files = hydrate_cache(directory, filelist_cache_filepath)
+    cache_end_time = time.time()
+    logger.info(f"Cache operation took {cache_end_time - cache_start_time:.2f} seconds")
+    logger.info(f"Directory has {len(cached_files)} files")
+
+    with ThreadPoolExecutor() as executor:
+        futures = []
+        for file_path in cached_files:
+            if file_path.lower().endswith('.jpg'):
+                future = executor.submit(process_image, file_path)
+                futures.append(future)
+
+        for future in futures:
+            future.result()
+
+    with conn_pool:
+        cursor = conn_pool.cursor()
+        cursor.execute("SELECT filename, file_path, file_date, file_md5, embeddings FROM images")
+        photos = [dict(row) for row in cursor.fetchall()]
+        for photo in photos:
+            photo['embeddings'] = msgpack.loads(photo['embeddings']) if photo['embeddings'] else []
+    logger.info(f"Loaded {len(photos)} photos from database")
+
+    with ThreadPoolExecutor() as executor:
+        futures = []
+        for photo in photos:
+            future = executor.submit(process_embeddings, photo)
+            futures.append(future)
+
+        for future in futures:
+            future.result()
+
+    conn_pool.close()
+    logger.info("Database connection closed.")
+
+if __name__ == "__main__":
+    main()
+
+[File Ends] combined_v3.py
+
+[File Begins] combined_v4.py
+import os
+import msgpack
+import socket
+import uuid
+import logging
+import time
+from dotenv import load_dotenv
+import sqlite3
+import hashlib
+import requests
+from PIL import Image
+from io import BytesIO
+import signal
+from concurrent.futures import ThreadPoolExecutor
+from logging.handlers import RotatingFileHandler
+import chromadb
+import json
+import numpy as np
+from chromadb.utils.embedding_functions import OpenCLIPEmbeddingFunction
+from chromadb.utils.data_loaders import ImageLoader
+
+# Configure logging
+file_handler = RotatingFileHandler('app.log', maxBytes=10485760, backupCount=10)
+file_handler.setLevel(logging.INFO)
+file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(file_formatter)
+
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+console_handler.setFormatter(console_formatter)
+
+logger = logging.getLogger('app')
+logger.setLevel(logging.INFO)
+logger.addHandler(file_handler)
+logger.addHandler(console_handler)
+
+# Load environment variables
+load_dotenv()
+
+# Generate unique ID for the machine
+host_name = socket.gethostname()
+unique_id = uuid.uuid5(uuid.NAMESPACE_DNS, host_name + str(uuid.getnode()))
+logger.info(f"Running on machine ID: {unique_id}")
+
+# Retrieve values from .env
+data_path = os.getenv('DATA_DIR', './')
+sqlite_db_filename = os.getenv('DB_FILENAME', 'images.db')
+filelist_cache_filename = os.getenv('CACHE_FILENAME', 'filelist_cache.msgpack')
+directory = os.getenv('IMAGE_DIRECTORY', 'images')
+embedding_server_url = os.getenv('EMBEDDING_SERVER')
+chroma_path = os.getenv('CHROME_PATH', "./chroma")
+chrome_collection_name = os.getenv('CHROME_COLLECTION', "images")
+
+# Append the unique ID to the db file path and cache file path
+sqlite_db_filepath = f"{data_path}{str(unique_id)}_{sqlite_db_filename}"
+filelist_cache_filepath = os.path.join(data_path, f"{unique_id}_{filelist_cache_filename}")
+
+# Graceful shutdown handler
+def graceful_shutdown(signum, frame):
+    logger.info("Caught signal, shutting down gracefully...")
+    if 'conn_pool' in globals():
+        connection.close()
+        logger.info("Database connection pool closed.")
+    exit(0)
+
+# Register the signal handlers for graceful shutdown
+signal.signal(signal.SIGINT, graceful_shutdown)
+signal.signal(signal.SIGTERM, graceful_shutdown)
+
+# Create a connection pool for the SQLite database
+connection = sqlite3.connect(sqlite_db_filepath)
+# conn_pool.row_factory = sqlite3.Row
+
+
+def create_table():
+    with connection:
+        connection.execute('''
+            CREATE TABLE IF NOT EXISTS images (
+                id INTEGER PRIMARY KEY,
+                filename TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                file_date TEXT NOT NULL,
+                file_md5 TEXT NOT NULL,
+                embeddings BLOB
+            )
+        ''')
+        connection.execute('CREATE INDEX IF NOT EXISTS idx_filename ON images (filename)')
+        connection.execute('CREATE INDEX IF NOT EXISTS idx_file_path ON images (file_path)')
+    logger.info("Table 'images' ensured to exist.")
+
+create_table()
+
+def file_generator(directory):
+    for root, _, files in os.walk(directory):
+        for file in files:
+            yield os.path.join(root, file)
+
+def hydrate_cache(directory, cache_file_path):
+    if os.path.exists(cache_file_path):
+        with open(cache_file_path, 'rb') as f:
+            cached_files = msgpack.load(f)
+        logger.info(f"Loaded cached files from {cache_file_path}")
+    else:
+        logger.info(f"Cache file not found at {cache_file_path}. Creating cache dirlist for {directory}...")
+        cached_files = list(file_generator(directory))
+        with open(cache_file_path, 'wb') as f:
+            msgpack.dump(cached_files, f)
+        logger.info(f"Created cache with {len(cached_files)} files and dumped to {cache_file_path}")
+    return cached_files
+
+def upload_embeddings(image_path):
+    try:
+        with Image.open(image_path) as img:
+            aspect_ratio = img.height / img.width
+            new_height = int(1024 * aspect_ratio)
+            img = img.resize((1024, new_height), Image.LANCZOS)
+            buffer = BytesIO()
+            img_format = 'JPEG' if img.format == 'JPEG' else 'PNG'
+            img.save(buffer, format=img_format)
+            buffer.seek(0)
+            files = {'image': (os.path.basename(image_path), buffer)}
+            response = requests.post(embedding_server_url, files=files)
+            response.raise_for_status()
+        logger.debug(f"Embeddings uploaded successfully for {image_path}")
+        return response
+    except Exception as e:
+        logger.error(f"An error occurred while uploading embeddings for {image_path}: {e}")
+        return None
+
+def update_db(image):
+    try:
+        embeddings_blob = sqlite3.Binary(msgpack.dumps(image.get('embeddings', [])))
+        with connection:
+            connection.execute("UPDATE images SET embeddings = ? WHERE filename = ?",
+                              (embeddings_blob, image['filename']))
+        logger.debug(f"Database updated successfully for image: {image['filename']}")
+    except sqlite3.Error as e:
+        logger.error(f"Database update failed for image: {image['filename']}. Error: {e}")
+
+def process_image(file_path):
+    file = os.path.basename(file_path)
+    file_date = time.ctime(os.path.getmtime(file_path))
+    with open(file_path, 'rb') as f:
+        file_content = f.read()
+    file_md5 = hashlib.md5(file_content).hexdigest()
+
+    conn = None
+    try:
+        conn = sqlite3.connect(sqlite_db_filepath)
+        with conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT EXISTS(SELECT 1 FROM images WHERE filename=? AND file_path=? LIMIT 1)
+            ''', (file, file_path))
+            result = cursor.fetchone()
+            file_exists = result[0] if result else False
+
+            if not file_exists:
+                cursor.execute('''
+                    INSERT INTO images (filename, file_path, file_date, file_md5)
+                    VALUES (?, ?, ?, ?)
+                ''', (file, file_path, file_date, file_md5))
+                logger.info(f'Inserted {file} with metadata into the database.')
+            else:
+                logger.info(f'File {file} already exists in the database. Skipping insertion.')
+    except sqlite3.Error as e:
+        logger.error(f'Error processing image {file}: {e}')
+    finally:
+        if conn:
+            conn.close()
+
+def process_embeddings(photo):
+    logger.info(f"Processing photo: {photo['filename']}")
+    if photo['embeddings']:
+        logger.info(f"Photo {photo['filename']} already has embeddings. Skipping.")
+        return
+    start_time = time.time()
+    response = upload_embeddings(photo['file_path'])
+    end_time = time.time()
+    if response and response.status_code == 200:
+        photo['embeddings'] = response.json().get('embeddings', [])
+        update_db(photo)
+        logger.info(f"Grabbed embeddings for {photo['filename']} in {end_time - start_time:.2f} seconds")
+    else:
+        logger.error(f"Failed to grab embeddings for {photo['filename']}. Status code: {response.status_code if response else 'N/A'}")
+
+def main():
+    cache_start_time = time.time()
+    cached_files = hydrate_cache(directory, filelist_cache_filepath)
+    cache_end_time = time.time()
+    logger.info(f"Cache operation took {cache_end_time - cache_start_time:.2f} seconds")
+    logger.info(f"Directory has {len(cached_files)} files")
+
+    with ThreadPoolExecutor() as executor:
+        futures = []
+        for file_path in cached_files:
+            if file_path.lower().endswith('.jpg'):
+                future = executor.submit(process_image, file_path)
+                futures.append(future)
+
+        for future in futures:
+            future.result()
+
+    with connection:
+        cursor = connection.cursor()
+        cursor.execute("SELECT filename, file_path, file_date, file_md5, embeddings FROM images")
+        photos = [{'filename': row[0], 'file_path': row[1], 'file_date': row[2], 'file_md5': row[3], 'embeddings': msgpack.loads(row[4]) if row[4] else []} for row in cursor.fetchall()]
+        for photo in photos:
+            photo['embeddings'] = msgpack.loads(photo['embeddings']) if photo['embeddings'] else []
+    logger.info(f"Loaded {len(photos)} photos from database")
+
+    with ThreadPoolExecutor() as executor:
+        futures = []
+        for photo in photos:
+            future = executor.submit(process_embeddings, photo)
+            futures.append(future)
+
+        for future in futures:
+            future.result()
+
+    # Initialize embedding function and data loader
+    start_time = time.time()
+    logger.info("Initializing embedding function and data loader")
+    embedding_function = OpenCLIPEmbeddingFunction(model_name="ViT-SO400M-14-SigLIP-384", checkpoint="webli")
+    data_loader = ImageLoader()
+    end_time = time.time()
+    logger.info(f"Finished initializing embedding function and data loader in {end_time - start_time:.2f} seconds")
+
+    client = chromadb.PersistentClient(path=chroma_path)
+    collection = client.get_or_create_collection(
+        name=chrome_collection_name,
+        embedding_function=embedding_function,
+        data_loader=data_loader
+    )
+
+    num_photos = len(photos)
+    i = 0
+    batch_size = 20
+    images = {
+        'ids': [],
+        'images': []
+    }
+
+    for photo in photos:
+        image_path = photo['file_path']
+        try:
+            with Image.open(image_path) as img:
+                image_array = np.array(img)
+                photo['image_array'] = image_array
+        except Exception as e:
+            logger.error(f"Failed to open image {image_path}: {e}")
+            continue
+
+        images['ids'].append(photo['filename'])
+        images['images'].append(photo['image_array'])
+        i += 1
+        logger.info(f"Grabbing {i}/{num_photos} images")
+
+        if (i % batch_size) == 0:
+            start_time = time.time()
+            collection.add(
+                ids=images['ids'],
+                images=images['images']
+            )
+            end_time = time.time()
+            images['ids'] = []
+            images['images'] = []
+            logger.info(f"Inserted {batch_size} images in {end_time - start_time:.2f} seconds")
+
+    connection.close()
+    logger.info("Database connection pool closed.")
+
+if __name__ == "__main__":
+    main()
+
+[File Ends] combined_v4.py
+
+[File Begins] combined_v5.py
+import os
+import msgpack
+import socket
+import uuid
+import logging
+import time
+from dotenv import load_dotenv
+import sqlite3
+import hashlib
+import requests
+from PIL import Image
+from io import BytesIO
+import signal
+from concurrent.futures import ThreadPoolExecutor
+from logging.handlers import RotatingFileHandler
+import chromadb
+import json
+import numpy as np
+from chromadb.utils.embedding_functions import OpenCLIPEmbeddingFunction
+from chromadb.utils.data_loaders import ImageLoader
+
+# Configure logging
+file_handler = RotatingFileHandler('app.log', maxBytes=10485760, backupCount=10)
+file_handler.setLevel(logging.INFO)
+file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(file_formatter)
+
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+console_handler.setFormatter(console_formatter)
+
+logger = logging.getLogger('app')
+logger.setLevel(logging.INFO)
+logger.addHandler(file_handler)
+logger.addHandler(console_handler)
+
+# Load environment variables
+load_dotenv()
+
+# Generate unique ID for the machine
+host_name = socket.gethostname()
+unique_id = uuid.uuid5(uuid.NAMESPACE_DNS, host_name + str(uuid.getnode()))
+logger.info(f"Running on machine ID: {unique_id}")
+
+# Retrieve values from .env
+data_path = os.getenv('DATA_DIR', './')
+sqlite_db_filename = os.getenv('DB_FILENAME', 'images.db')
+filelist_cache_filename = os.getenv('CACHE_FILENAME', 'filelist_cache.msgpack')
+image_directory = os.getenv('IMAGE_DIRECTORY', 'images')
+embedding_server_url = os.getenv('EMBEDDING_SERVER')
+chroma_path = os.getenv('CHROME_PATH', "./chroma")
+chrome_collection_name = os.getenv('CHROME_COLLECTION', "images")
+
+# Append the unique ID to the db file path and cache file path
+sqlite_db_filepath = f"{data_path}{str(unique_id)}_{sqlite_db_filename}"
+filelist_cache_filepath = os.path.join(data_path, f"{unique_id}_{filelist_cache_filename}")
+
+# Graceful shutdown handler
+def graceful_shutdown(signum, frame):
+    logger.info("Caught signal, shutting down gracefully...")
+    if 'conn_pool' in globals():
+        connection.close()
+        logger.info("Database connection pool closed.")
+    exit(0)
+
+# Register the signal handlers for graceful shutdown
+signal.signal(signal.SIGINT, graceful_shutdown)
+signal.signal(signal.SIGTERM, graceful_shutdown)
+
+# Create a connection pool for the SQLite database
+connection = sqlite3.connect(sqlite_db_filepath)
+# conn_pool.row_factory = sqlite3.Row
+
+
+def create_table():
+    with connection:
+        connection.execute('''
+            CREATE TABLE IF NOT EXISTS images (
+                id INTEGER PRIMARY KEY,
+                filename TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                file_date TEXT NOT NULL,
+                file_md5 TEXT NOT NULL,
+                embeddings BLOB
+            )
+        ''')
+        connection.execute('CREATE INDEX IF NOT EXISTS idx_filename ON images (filename)')
+        connection.execute('CREATE INDEX IF NOT EXISTS idx_file_path ON images (file_path)')
+    logger.info("Table 'images' ensured to exist.")
+
+create_table()
+
+def file_generator(directory):
+    print(directory)
+    for root, _, files in os.walk(directory):
+        for file in files:
+            yield os.path.join(root, file)
+
+def hydrate_cache(directory, cache_file_path):
+    logger.info(f"Hydrating cache for {directory} using {cache_file_path}...")
+    if os.path.exists(cache_file_path):
+        with open(cache_file_path, 'rb') as f:
+            cached_files = msgpack.load(f)
+        logger.info(f"Loaded cached files from {cache_file_path}")
+        if len(cached_files) == 0:
+            logger.warning(f"Cache file {cache_file_path} is empty. Regenerating cache...")
+            cached_files = list(file_generator(directory))
+            print(cached_files[0])
+            print("-------------------")
+            with open(cache_file_path, 'wb') as f:
+                msgpack.dump(cached_files, f)
+            logger.info(f"Regenerated cache with {len(cached_files)} files and dumped to {cache_file_path}")
+    else:
+        logger.info(f"Cache file not found at {cache_file_path}. Creating cache dirlist for {directory}...")
+        cached_files = list(file_generator(directory))
+        print(cached_files[0])
+        print("-------------------")
+        with open(cache_file_path, 'wb') as f:
+            msgpack.dump(cached_files, f)
+        logger.info(f"Created cache with {len(cached_files)} files and dumped to {cache_file_path}")
+    return cached_files
+
+def upload_embeddings(image_path):
+    try:
+        with Image.open(image_path) as img:
+            aspect_ratio = img.height / img.width
+            new_height = int(1024 * aspect_ratio)
+            img = img.resize((1024, new_height), Image.LANCZOS)
+            buffer = BytesIO()
+            img_format = 'JPEG' if img.format == 'JPEG' else 'PNG'
+            img.save(buffer, format=img_format)
+            buffer.seek(0)
+            files = {'image': (os.path.basename(image_path), buffer)}
+            response = requests.post(embedding_server_url, files=files)
+            response.raise_for_status()
+        logger.debug(f"Embeddings uploaded successfully for {image_path}")
+        return response
+    except Exception as e:
+        logger.error(f"An error occurred while uploading embeddings for {image_path}: {e}")
+        return None
+
+def update_db(image):
+    try:
+        embeddings_blob = sqlite3.Binary(msgpack.dumps(image.get('embeddings', [])))
+        with sqlite3.connect(sqlite_db_filepath) as conn:
+            conn.execute("UPDATE images SET embeddings = ? WHERE filename = ?",
+                         (embeddings_blob, image['filename']))
+        logger.debug(f"Database updated successfully for image: {image['filename']}")
+    except sqlite3.Error as e:
+        logger.error(f"Database update failed for image: {image['filename']}. Error: {e}")
+
+def process_image(file_path):
+    file = os.path.basename(file_path)
+    file_date = time.ctime(os.path.getmtime(file_path))
+    with open(file_path, 'rb') as f:
+        file_content = f.read()
+    file_md5 = hashlib.md5(file_content).hexdigest()
+
+    conn = None
+    try:
+        conn = sqlite3.connect(sqlite_db_filepath)
+        with conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT EXISTS(SELECT 1 FROM images WHERE filename=? AND file_path=? LIMIT 1)
+            ''', (file, file_path))
+            result = cursor.fetchone()
+            file_exists = result[0] if result else False
+
+            if not file_exists:
+                cursor.execute('''
+                    INSERT INTO images (filename, file_path, file_date, file_md5)
+                    VALUES (?, ?, ?, ?)
+                ''', (file, file_path, file_date, file_md5))
+                logger.info(f'Inserted {file} with metadata into the database.')
+            else:
+                logger.info(f'File {file} already exists in the database. Skipping insertion.')
+    except sqlite3.Error as e:
+        logger.error(f'Error processing image {file}: {e}')
+    finally:
+        if conn:
+            conn.close()
+
+def process_embeddings(photo):
+    logger.info(f"Processing photo: {photo['filename']}")
+    if photo['embeddings']:
+        logger.info(f"Photo {photo['filename']} already has embeddings. Skipping.")
+        return
+    start_time = time.time()
+    response = upload_embeddings(photo['file_path'])
+    end_time = time.time()
+    if response and response.status_code == 200:
+        photo['embeddings'] = response.json().get('embeddings', [])
+        update_db(photo)
+        logger.info(f"Grabbed embeddings for {photo['filename']} in {end_time - start_time:.2f} seconds")
+    else:
+        logger.error(f"Failed to grab embeddings for {photo['filename']}. Status code: {response.status_code if response else 'N/A'}")
+
+def main():
+    cache_start_time = time.time()
+    cached_files = hydrate_cache(image_directory, filelist_cache_filepath)
+    cache_end_time = time.time()
+    logger.info(f"Cache operation took {cache_end_time - cache_start_time:.2f} seconds")
+    logger.info(f"Directory has {len(cached_files)} files: {image_directory}")
+
+    with ThreadPoolExecutor() as executor:
+        futures = []
+        for file_path in cached_files:
+            if file_path.lower().endswith('.jpg'):
+                future = executor.submit(process_image, file_path)
+                futures.append(future)
+
+        for future in futures:
+            future.result()
+
+    with connection:
+        cursor = connection.cursor()
+        cursor.execute("SELECT filename, file_path, file_date, file_md5, embeddings FROM images")
+        photos = [{'filename': row[0], 'file_path': row[1], 'file_date': row[2], 'file_md5': row[3], 'embeddings': msgpack.loads(row[4]) if row[4] else []} for row in cursor.fetchall()]
+        for photo in photos:
+            photo['embeddings'] = msgpack.loads(photo['embeddings']) if photo['embeddings'] else []
+    logger.info(f"Loaded {len(photos)} photos from database")
+
+    with ThreadPoolExecutor() as executor:
+        futures = []
+        for photo in photos:
+            future = executor.submit(process_embeddings, photo)
+            futures.append(future)
+
+        for future in futures:
+            future.result()
+
+    connection.close()
+    logger.info("Database connection pool closed.")
+
+if __name__ == "__main__":
+    main()
+
+[File Ends] combined_v5.py
+
+[File Begins] fix_cache 3.py
+import os
+import sqlite3
+from dotenv import load_dotenv
+import time
+import hashlib
+import logging
+import json
+import pickle
+import uuid
+import socket
+
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Load environment variables
+load_dotenv()
+
+host_name = socket.gethostname()
+unique_id = uuid.uuid5(uuid.NAMESPACE_DNS, host_name + str(uuid.getnode()))
+
+# Retrieve values from .env
+data_path = os.getenv('DATA_DIR', './')
+sqlite_db_filename= os.getenv('DB_FILENAME', 'images.db')
+filelist_cache_filename = os.getenv('CACHE_FILENAME', 'filelist_cache.pkl')
+directory = os.getenv('IMAGE_DIRECTORY', 'images')
+bad_directory = os.getenv('BAD_IMAGE_DIRECTORY', 'bad_images')
+
+#append the unique id to the db file path, and cache file path
+sqlite_db_filepath = f"{data_path}{str(unique_id)}_{sqlite_db_filename}"
+filelist_cache_filepath = os.path.join(data_path, f"{unique_id}_{filelist_cache_filename}")
+
+
+if directory:
+    pickle_file_path = filelist_cache_filepath
+    cache_start_time = time.time()  # Start timing cache operation
+    cached_files = []
+    # Check if files.pkl exists and read from it as cache
+    if os.path.exists(pickle_file_path):
+        with open(pickle_file_path, 'rb') as f:
+            cached_files = pickle.load(f)
+        logging.debug(f"Loaded cached files from {pickle_file_path}")
+
+    logging.debug(f"cached_files={len(cached_files)}")
+
+    for c in cached_files:
+        logging.info(c)
+        p = c.replace(bad_directory, "")
+        logging.info(p)
+
+
+[File Ends] fix_cache 3.py
+
+[File Begins] fix_cache.py
+import os
+import sqlite3
+from dotenv import load_dotenv
+import time
+import hashlib
+import logging
+import json
+import pickle
+import uuid
+import socket
+
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Load environment variables
+load_dotenv()
+
+host_name = socket.gethostname()
+unique_id = uuid.uuid5(uuid.NAMESPACE_DNS, host_name + str(uuid.getnode()))
+
+# Retrieve values from .env
+data_path = os.getenv('DATA_DIR', './')
+sqlite_db_filename= os.getenv('DB_FILENAME', 'images.db')
+filelist_cache_filename = os.getenv('CACHE_FILENAME', 'filelist_cache.pkl')
+directory = os.getenv('IMAGE_DIRECTORY', 'images')
+bad_directory = os.getenv('BAD_IMAGE_DIRECTORY', 'bad_images')
+
+#append the unique id to the db file path, and cache file path
+sqlite_db_filepath = f"{data_path}{str(unique_id)}_{sqlite_db_filename}"
+filelist_cache_filepath = os.path.join(data_path, f"{unique_id}_{filelist_cache_filename}")
+
+
+if directory:
+    pickle_file_path = filelist_cache_filepath
+    cache_start_time = time.time()  # Start timing cache operation
+    cached_files = []
+    # Check if files.pkl exists and read from it as cache
+    if os.path.exists(pickle_file_path):
+        with open(pickle_file_path, 'rb') as f:
+            cached_files = pickle.load(f)
+        logging.debug(f"Loaded cached files from {pickle_file_path}")
+
+    logging.debug(f"cached_files={len(cached_files)}")
+
+    files = []
+    for c in cached_files:
+        p = c.replace(bad_directory, "")
+        p = os.path.join(directory, p)
+        files.append(p)
+
+    logging.debug(f"files={len(files)}")
+    # write to the cache file
+    with open(pickle_file_path, 'wb') as f:
+        pickle.dump(files, f)
+
+
+
+[File Ends] fix_cache.py
+
+[File Begins] generate_cache.py
+import os
+import pickle
+import socket
+import uuid
+import logging
+import time
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def load_environment_variables():
+    # Load environment variables
+    data_path = os.getenv('DATA_DIR', './')
+    cache_filename = os.getenv('CACHE_FILENAME', 'filelist_cache.pkl')
+    image_directory = os.getenv('IMAGE_DIRECTORY', 'images')
+    return data_path, cache_filename, image_directory
+
+def generate_unique_id():
+    host_name = socket.gethostname()
+    unique_id = uuid.uuid5(uuid.NAMESPACE_DNS, host_name + str(uuid.getnode()))
+    logging.info(f"Running on machine ID: {unique_id}")
+    return unique_id
+
+def get_cache_file_path(data_path, unique_id, cache_filename):
+    return os.path.join(data_path, f"{unique_id}_{cache_filename}")
+
+def file_generator(directory):
+    for root, _, files in os.walk(directory):
+        for file in files:
+            yield os.path.join(root, file)
+
+def hydrate_cache(directory, cache_file_path):
+
+    logging.debug(f"Cache file not found at {cache_file_path}. Creating cache dirlist for {directory}...")
+    cached_files = []
+    file_count = 0
+    print("Crawling filesystem", end='', flush=True)
+    dir_generator = file_generator(directory)
+
+    for file_path in dir_generator:
+        cached_files.append(file_path)
+        file_count += 1
+        if file_count % 10 == 0:
+            print('.', end='', flush=True)
+    print()
+    with open(cache_file_path, 'wb') as f:
+        pickle.dump(cached_files, f)
+    logging.info(f"Created cache with {len(cached_files)} files and dumped to {cache_file_path}")
+    return cached_files
+
+def main():
+    data_path, cache_filename, image_directory = load_environment_variables()
+    unique_id = generate_unique_id()
+    cache_file_path = get_cache_file_path(data_path, unique_id, cache_filename)
+    cache_start_time = time.time()
+    cached_files = hydrate_cache(image_directory, cache_file_path)
+    cache_end_time = time.time()
+    logging.debug(f"Cache operation took {cache_end_time - cache_start_time:.2f} seconds")
+    logging.info(f"Directory has {len(cached_files)} files")
+
+if __name__ == "__main__":
+    main()
+
+[File Ends] generate_cache.py
+
+[File Begins] generate_chroma_db.py
+import os
+import msgpack
+import socket
+import uuid
+import logging
+import time
+from dotenv import load_dotenv
+import sqlite3
+import hashlib
+import requests
+from PIL import Image
+from io import BytesIO
+import signal
+from concurrent.futures import ThreadPoolExecutor
+from logging.handlers import RotatingFileHandler
+import chromadb
+import json
+import numpy as np
+from chromadb.utils.embedding_functions import OpenCLIPEmbeddingFunction
+from chromadb.utils.data_loaders import ImageLoader
+
+# Configure logging
+file_handler = RotatingFileHandler("chroma_db.log", maxBytes=10485760, backupCount=10)
+file_handler.setLevel(logging.INFO)
+file_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+file_handler.setFormatter(file_formatter)
+
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+console_handler.setFormatter(console_formatter)
+
+logger = logging.getLogger("app")
+logger.setLevel(logging.INFO)
+logger.addHandler(file_handler)
+logger.addHandler(console_handler)
+
+# Load environment variables
+load_dotenv()
+
+# Generate unique ID for the machine
+host_name = socket.gethostname()
+unique_id = uuid.uuid5(uuid.NAMESPACE_DNS, host_name + str(uuid.getnode()))
+unique_id = "f460c7cf-07f1-5306-85e3-1b9aef718dcd"
+logger.info(f"Running on machine ID: {unique_id}")
+
+# Retrieve values from .env
+data_path = os.getenv("DATA_DIR", "./")
+sqlite_db_filename = os.getenv("DB_FILENAME", "images.db")
+filelist_cache_filename = os.getenv("CACHE_FILENAME", "filelist_cache.msgpack")
+directory = os.getenv("IMAGE_DIRECTORY", "images")
+embedding_server_url = os.getenv("EMBEDDING_SERVER")
+chroma_path = os.getenv("CHROME_PATH", "./chroma")
+chrome_collection_name = os.getenv("CHROME_COLLECTION", "images")
+
+# Append the unique ID to the db file path and cache file path
+sqlite_db_filepath = f"{data_path}{str(unique_id)}_{sqlite_db_filename}"
+filelist_cache_filepath = os.path.join(
+    data_path, f"{unique_id}_{filelist_cache_filename}"
+)
+
+
+# Chroma client and collection setup
+chroma_client = chromadb.PersistentClient(path=chroma_path)
+
+from chromadb.utils.embedding_functions import OpenCLIPEmbeddingFunction
+
+embedding_function = OpenCLIPEmbeddingFunction(
+    model_name="ViT-SO400M-14-SigLIP-384", checkpoint="webli"
+)
+
+from chromadb.utils.data_loaders import ImageLoader
+
+data_loader = ImageLoader()
+
+collection = chroma_client.get_or_create_collection(
+    name=chrome_collection_name,
+    embedding_function=embedding_function,
+    data_loader=data_loader,
+)
+
+
+def load_meme_embeddings():
+    """Load memes and their embeddings from the SQLite database."""
+    memes = []
+    conn = None
+    try:
+        conn = sqlite3.connect(sqlite_db_filepath)
+        conn.row_factory = sqlite3.Row  # Access columns by names
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT filename, embeddings FROM images WHERE embeddings IS NOT NULL"
+        )
+        rows = cursor.fetchall()
+        for row in rows:
+            # Assuming embeddings are stored as a msgpack-encoded bytes
+            embeddings = msgpack.loads(row["embeddings"])
+            memes.append({"filename": row["filename"], "embeddings": embeddings})
+        logger.debug(f"Loaded {len(memes)} memes from the database.")
+    except sqlite3.Error as e:
+        logger.error(f"Error loading memes from the database: {e}")
+    finally:
+        if conn:
+            conn.close()
+    return memes
+
+
+def add_embedding_to_chroma(meme):
+    try:
+        collection.add(
+            embeddings=meme["embeddings"],
+            documents=[meme["filename"]],
+            ids=[meme["filename"]],
+        )
+        logger.debug(f"Added embedding to Chroma for {meme['filename']}")
+    except Exception as e:
+        logger.error(f"Error adding embedding to Chroma for {meme['filename']}: {e}")
+
+
+def main():
+    memes = load_meme_embeddings()
+    logger.info(f"Loaded {len(memes)} memes from the database.")
+
+    with ThreadPoolExecutor() as executor:
+        futures = []
+        for meme in memes:
+            future = executor.submit(add_embedding_to_chroma, meme)
+            futures.append(future)
+
+        for future in futures:
+            future.result()
+
+
+if __name__ == "__main__":
+    main()
+
+[File Ends] generate_chroma_db.py
+
+[File Begins] generate_db.py
+import os
+import sqlite3
+from dotenv import load_dotenv
+import time
+import hashlib
+import logging
+import json
+import pickle
+import uuid
+import socket
+import signal
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Load environment variables
+load_dotenv()
+
+host_name = socket.gethostname()
+unique_id = uuid.uuid5(uuid.NAMESPACE_DNS, host_name + str(uuid.getnode()))
+
+logging.info(f"Runnning on machine ID: {unique_id}")
+
+# Retrieve values from .env
+data_path = os.getenv('DATA_DIR', './')
+sqlite_db_filename= os.getenv('DB_FILENAME', 'images.db')
+filelist_cache_filename = os.getenv('CACHE_FILENAME', 'filelist_cache.pkl')
+directory = os.getenv('IMAGE_DIRECTORY', 'images')
+
+#append the unique id to the db file path, and cache file path
+sqlite_db_filepath = f"{data_path}{str(unique_id)}_{sqlite_db_filename}"
+filelist_cache_filepath = os.path.join(data_path, f"{unique_id}_{filelist_cache_filename}")
+
+# Graceful shutdown handler
+def graceful_shutdown(signum, frame):
+    logging.info("Caught signal, shutting down gracefully...")
+    if 'conn' in globals():
+        conn.commit()
+        conn.close()
+        logging.info("Database connection closed after committing changes.")
+    exit(0)
+
+# Register the signal handlers for graceful shutdown
+signal.signal(signal.SIGINT, graceful_shutdown)
+signal.signal(signal.SIGTERM, graceful_shutdown)
+
+try:
+    conn = sqlite3.connect(sqlite_db_filepath)
+    cursor = conn.cursor()
+    logging.info("Connected to the SQLite database.")
+
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS images (
+        id INTEGER PRIMARY KEY,
+        filename TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        file_date TEXT NOT NULL,
+        file_md5 TEXT NOT NULL,
+        embeddings BLOB
+    )
+    ''')
+    logging.info("Table 'images' ensured to exist.")
+except sqlite3.Error as e:
+    logging.error(f"An error occurred while connecting to the database or ensuring the table exists: {e}")
+
+def get_file_metadata(file_path):
+    """
+    Function to fetch file metadata including the file modification date.
+    Replace or extend this with actual logic for generating embeddings.
+    """
+    try:
+        file_date = time.ctime(os.path.getmtime(file_path))
+        embeddings = b""  # Placeholder for actual embeddings
+        logging.debug(f"Metadata for '{file_path}': file_date={file_date}, embeddings={embeddings}")
+        return file_date, embeddings
+    except Exception as e:
+        logging.error(f"Error getting metadata for '{file_path}': {e}")
+        return None, None
+
+if directory:
+    pickle_file_path = filelist_cache_filepath
+    cache_start_time = time.time()  # Start timing cache operation
+
+    # Check if files.pkl exists and read from it as cache
+    if os.path.exists(pickle_file_path):
+        with open(pickle_file_path, 'rb') as f:
+            cached_files = pickle.load(f)
+        logging.debug(f"Loaded cached files from {pickle_file_path}")
+    else:
+        # If files.pkl does not exist, walk the directory and create the cache
+        cached_files = {}
+        for root, dirs, files in os.walk(directory):
+            for file in files:
+                file_path = os.path.join(root, file)
+                cached_files[file] = file_path
+        with open(pickle_file_path, 'wb') as f:
+            pickle.dump(cached_files, f)
+        logging.debug(f"Created cache with {len(cached_files)} files and dumped to {pickle_file_path}")
+        exit()
+
+    cache_end_time = time.time()  # End timing cache operation
+    logging.debug(f"Cache operation took {cache_end_time - cache_start_time} seconds.")
+
+    # Debug logging to indicate the start of processing cached files
+    logging.debug(f"Starting to process {len(cached_files)} cached files.")
+
+    # Use the cached files for processing
+    commit_counter = 0
+    commit_threshold = 100  # Number of inserts before committing to the database
+
+    total_files = len(cached_files)
+    file_count = 0
+    for file in cached_files:
+        if file.lower().endswith('.jpg'):
+            file_path = file
+            file_date, embeddings = get_file_metadata(file_path)
+            if file_date and embeddings is not None:
+                try:
+                    # Check if the file is already in the database by filename and file_path
+                    cursor.execute('''
+                        SELECT EXISTS(SELECT 1 FROM images WHERE filename=? AND file_path=? LIMIT 1)
+                    ''', (file, file_path))
+                    file_exists = cursor.fetchone()[0]
+
+                    if not file_exists:
+                        # Calculate MD5 hash for the file
+                        with open(file_path, 'rb') as f:
+                            file_content = f.read()
+                        file_md5 = hashlib.md5(file_content).hexdigest()
+                        # Insert new file into the database
+                        cursor.execute('''
+                            INSERT INTO images (filename, file_path, file_date, embeddings, file_md5)
+                            VALUES (?, ?, ?, ?, ?)
+                        ''', (file, file_path, file_date, embeddings, file_md5))
+                        progress_percent = (file_count / total_files) * 100
+                        logging.info(f'[{file_count}/{total_files}] ({progress_percent:.2f}%) Inserted {file} with metadata into the database.')
+                        commit_counter += 1
+
+                        # Commit to the database after every commit_threshold inserts
+                        if commit_counter >= commit_threshold:
+                            conn.commit()
+                            logging.info(f"Committed {commit_counter} changes to the database.")
+                            commit_counter = 0
+                    else:
+                        logging.info(f'[{file_count}/{total_files}] File {file} already exists in the database. Skipping insertion.')
+                except sqlite3.Error as e:
+                    logging.error(f"[{file_count}/{total_files}] Failed to insert {file} into the database: {e}")
+            else:
+                logging.error(f"[{file_count}/{total_files}] Failed to get metadata for {file}. Skipping insertion.")
+        file_count += 1
+else:
+    logging.error("The IMAGE_DIRECTORY environment variable is not set.")
+
+if 'conn' in globals():
+    conn.commit()
+    conn.close()
+    logging.info("Database connection closed after committing changes.")
+
+print('All JPG files and metadata have been inserted')
+
+[File Ends] generate_db.py
+
+[File Begins] generate_embeddings_chroma.py
+import os
+import requests
+import chromadb
+import json
+import sqlite3
+import logging
+import numpy as np
+import time
+from dotenv import load_dotenv
+from PIL import Image
+from io import BytesIO
+import uuid
+import socket
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+
+from chromadb.utils.embedding_functions import OpenCLIPEmbeddingFunction
+from chromadb.utils.data_loaders import ImageLoader
+import time
+
+# Start timing
+start_time = time.time()
+
+# Configure logging
+
+logging.info("Initializing embedding function and data loader")
+
+embedding_function = OpenCLIPEmbeddingFunction(model_name="ViT-SO400M-14-SigLIP-384", checkpoint="webli")
+data_loader = ImageLoader()
+
+# End timing
+end_time = time.time()
+logging.info(f"Finished initializing embedding function and data loader in {end_time - start_time:.2f} seconds")
+
+
+# Load environment variables
+load_dotenv()
+
+host_name = socket.gethostname()
+unique_id = uuid.uuid5(uuid.NAMESPACE_DNS, host_name + str(uuid.getnode()))
+
+# Retrieve values from .env
+data_path = os.getenv('DATA_DIR', './')
+sqlite_db_filename= os.getenv('DB_FILENAME', 'images.db')
+directory = os.getenv('IMAGE_DIRECTORY', 'images')
+embedding_server_url = os.getenv('EMBEDDING_SERVER')
+chroma_path = os.getenv('CHROME_PATH', "./chroma")
+chrome_collection_name = os.getenv('CHROME_COLLECTION', "images")
+
+client = chromadb.PersistentClient(path=chroma_path)
+
+#append the unique id to the db file path, and cache file path
+sqlite_db_filepath = f"{data_path}{str(unique_id)}_{sqlite_db_filename}"
+
+# Connect to the SQLite database
+conn = sqlite3.connect(sqlite_db_filepath)
+cur = conn.cursor()
+
+collection = client.get_or_create_collection(
+    name=chrome_collection_name,
+    embedding_function=embedding_function,
+    data_loader=data_loader)
+
+
+
+# Load memes from database
+cur.execute("SELECT filename, file_path, file_date, file_md5, embeddings FROM images")
+photos = [{'filename': row[0], 'file_path': row[1], 'file_date': row[2], 'file_md5': row[3], 'embeddings': json.loads(row[4]) if row[4] else []} for row in cur.fetchall()]
+
+print(f"Loaded {len(photos)} photos from database")
+
+num_photos = len(photos)
+i = 0
+batch_size = 20
+images = {}
+images['ids'] = []
+images['images'] = []
+for photo in photos:
+
+    image_path = photo['file_path'] #os.path.join(image_directory, m['path'])
+    try:
+        with Image.open(image_path) as img:
+            image_array = np.array(img)
+            photo['image_array'] = image_array
+    except Exception as e:
+        logging.error(f"Failed to open image {image_path}: {e}")
+
+    images['ids'].append(photo['filename'])
+    images['images'].append(photo['image_array'])
+
+    i += 1
+    print(f"Grabbing {i}/{num_photos} images")
+    if (i % batch_size) == 0:
+        import time
+
+        print(f"Inserting {batch_size} images")
+        start_time = time.time()
+        collection.add(
+            ids=images['ids'],
+            images=images['images']  # A list of numpy arrays representing images
+        )
+        end_time = time.time()
+        images['ids'] = []
+        images['images'] = []
+        print(f"Inserted {batch_size} images in {end_time - start_time:.2f} seconds")
+
+# Close the database connection
+conn.close()
+
+[File Ends] generate_embeddings_chroma.py
+
+[File Begins] generate_embeddings_db.py
+import os
+import requests
+import json
+import sqlite3
+import logging
+import time
+from dotenv import load_dotenv
+from PIL import Image
+from io import BytesIO
+import uuid
+import socket
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Load environment variables
+load_dotenv()
+
+host_name = socket.gethostname()
+unique_id = uuid.uuid5(uuid.NAMESPACE_DNS, host_name + str(uuid.getnode()))
+
+# Retrieve values from .env
+data_path = os.getenv('DATA_DIR', './')
+sqlite_db_filename= os.getenv('DB_FILENAME', 'images.db')
+directory = os.getenv('IMAGE_DIRECTORY', 'images')
+embedding_server_url = os.getenv('EMBEDDING_SERVER')
+
+#append the unique id to the db file path, and cache file path
+sqlite_db_filepath = f"{data_path}{str(unique_id)}_{sqlite_db_filename}"
+
+# Connect to the SQLite database
+conn = sqlite3.connect(sqlite_db_filepath)
+cur = conn.cursor()
+
+def upload_embeddings(image_path):
+
+    try:
+        # Open the image and resize it to 1024xY while maintaining aspect ratio
+        with Image.open(image_path) as img:
+            aspect_ratio = img.height / img.width
+            new_height = int(1024 * aspect_ratio)
+            img = img.resize((1024, new_height), Image.Resampling.LANCZOS)
+
+            # Save the resized image to a buffer
+
+            buffer = BytesIO()
+            img_format = 'JPEG' if img.format == 'JPEG' else 'PNG'
+            img.save(buffer, format=img_format)
+            buffer.seek(0)
+
+            files = {'image': (os.path.basename(image_path), buffer)}
+            response = requests.post(embedding_server_url, files=files)
+            response.raise_for_status()  # This will raise an HTTPError if the HTTP request returned an unsuccessful status code
+        logging.debug(f"Embeddings uploaded successfully for {image_path}")
+        return response
+    except requests.exceptions.HTTPError as e:
+        logging.error(f"HTTPError occurred while uploading embeddings for {image_path}: {e}")
+    except requests.exceptions.RequestException as e:
+        logging.error(f"RequestException occurred while uploading embeddings for {image_path}: {e}")
+    except Exception as e:
+        logging.error(f"An error occurred while uploading embeddings for {image_path}: {e}")
+
+def update_db(image):
+    try:
+        # Convert embeddings list to a bytes object for BLOB storage
+        embeddings_blob = sqlite3.Binary(json.dumps(image.get('embeddings', [])).encode('utf-8'))
+        cur.execute("UPDATE images SET embeddings = ? WHERE filename = ?",
+                    (embeddings_blob, image['filename']))
+        conn.commit()
+        logging.debug(f"Database updated successfully for image: {image['filename']}")
+    except sqlite3.Error as e:
+        logging.error(f"Database update failed for image: {image['filename']}. Error: {e}")
+
+# Load memes from database
+cur.execute("SELECT filename, file_path, file_date, file_md5, embeddings FROM images")
+photos = [{'filename': row[0], 'file_path': row[1], 'file_date': row[2], 'file_md5': row[3], 'embeddings': json.loads(row[4]) if row[4] else []} for row in cur.fetchall()]
+
+print(f"Loaded {len(photos)} photos from database")
+
+l = len(photos)
+i = 0
+for m in photos:
+    logging.debug(f"Processing photo {i+1}/{l}: {m['filename']}")
+    if 'embeddings' in m and m['embeddings']:
+        logging.debug(f"Photo {m['filename']} already has embeddings")
+        continue
+    start_time = time.time()
+    response = upload_embeddings(m['file_path'])
+    end_time = time.time()
+    logging.info(f"[{i+1}/{l}] Grabbed embeddings for {m['filename']} with status code {response.status_code} in {end_time - start_time:.2f} seconds")
+    if response.status_code == 200:
+        m['embeddings'] = response.json().get('embeddings', [])
+        update_db(m)
+        logging.debug(f"Updated database with embeddings for {m['filename']}")
+    else:
+        logging.error(f"Failed to grab embeddings for {m['filename']}. Status code: {response.status_code}")
+    i += 1
+
+# Close the database connection
+conn.close()
+
+[File Ends] generate_embeddings_db.py
+
+[File Begins] load_embeddings_into_chromadb.py
+import os
+import sqlite3
+import chromadb
+from dotenv import load_dotenv
+from PIL import Image
+import json
+import numpy as np
+
+load_dotenv()
+
+chroma_path = "./chroma"
+chroma_client = chromadb.PersistentClient(path=chroma_path)
+collection_name = "meme-collection"
+image_directory = "/Users/harper/Public/memes"
+chroma_path = "./chroma-magic"
+client = chromadb.PersistentClient(path=chroma_path)
+
+from chromadb.utils.embedding_functions import OpenCLIPEmbeddingFunction
+embedding_function = OpenCLIPEmbeddingFunction(model_name="ViT-SO400M-14-SigLIP-384", checkpoint="webli")
+
+from chromadb.utils.data_loaders import ImageLoader
+data_loader = ImageLoader()
+
+
+
+image_directory = "/Users/harper/Public/memes"
+
+collection = client.get_or_create_collection(
+    name='multimodal_collection',
+    embedding_function=embedding_function,
+    data_loader=data_loader)
+
+# SQLite database file
+db_file = "memes.db"
+
+def get_db_connection():
+    conn = sqlite3.connect(db_file)
+    conn.row_factory = sqlite3.Row  # Access columns by names
+    return conn
+
+def load_meme_embeddings():
+    """Load memes and their embeddings from the SQLite database."""
+    memes = []
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, embeddings FROM memes WHERE embeddings IS NOT NULL")
+    rows = cursor.fetchall()
+    for row in rows:
+        # Assuming embeddings are stored as a JSON-encoded string
+        embeddings = json.loads(row["embeddings"])
+        memes.append({
+            "id": row["id"],
+            "embeddings": embeddings
+        })
+    return memes
+
+memes = load_meme_embeddings()
+print(f"Loaded {len(memes)} memes from the database.")
+
+for m in memes:
+    collection.add(
+        embeddings=m["embeddings"],
+        documents=[m['id']],
+        ids=[m['id']]
+    )
+    print(f"Added embedding to Chroma for {m['id']}")
+
+
+[File Ends] load_embeddings_into_chromadb.py
+
+[File Begins] requirements.txt
+chromadb
+open-clip-torch
+transformers
+python-dotenv
+flask
+
+[File Ends] requirements.txt
+
+[File Begins] tag.py
+import open_clip
+import torch
+from PIL import Image
+import logging
+
+
+model_name = "ViT-SO400M-14-SigLIP-384"
+device = "mps"
+
+try:
+    pretrained_models = dict(open_clip.list_pretrained())
+    if model_name not in pretrained_models:
+        raise ValueError(f"Model {model_name} is not available in pretrained models.")
+    model, _, preprocess = open_clip.create_model_and_transforms(
+        model_name, device=device, pretrained=pretrained_models[model_name], precision="fp16")
+    model.eval()
+    model.to(device).float()  # Move model to device and convert to half precision
+    logging.debug(f"Model {model_name} loaded and moved to {device}")
+except Exception as e:
+    logging.error(f"Error loading model: {e}")
+    raise
+
+try:
+    tokenizer = open_clip.get_tokenizer(model_name)
+    logging.debug(f"Tokenizer for model {model_name} obtained")
+except Exception as e:
+    logging.error(f"Error obtaining tokenizer for model {model_name}: {e}")
+    raise
+
+# model, _, transform = open_clip.create_model_and_transforms(
+#   model_name="coca_ViT-L-14",
+#   pretrained="mscoco_finetuned_laion2B-s13B-b90k"
+# )
+
+# im = Image.open("/Users/harper/Public/memes/00016840-PHOTO-2023-06-02-08-23-19.jpg").convert("RGB")
+# im = transform(im).unsqueeze(0)
+
+with torch.no_grad():
+  # generated = model.generate(im)
+  # generated = model.generate_text(im)
+  #
+  text = "hello world"
+  text_tokenized = tokenizer(["hello world"]).to(device)
+  print(text_tokenized)
+  # print(dir(model))
+  text_features = model.encode_text(text_tokenized)
+  text_features /= text_features.norm(dim=-1, keepdim=True)
+  embeddings = text_features.cpu().numpy().tolist()
+  logging.debug("Embeddings generated successfully.")
+  print(embeddings)
+
+
+# print(open_clip.decode(generated[0]).split("<end_of_text>")[0].replace("<start_of_text>", ""))
+
+[File Ends] tag.py
+
+  [File Begins] templates/base.html
+  <!doctype html>
+  <html class="h-full bg-gray-100">
+  
+      <head>
+  <title>{% block title %}{% endblock %} ~ ℳℰℳℰS</title>
+      <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+      </head>
+  
+   <body class="h-full">
+  
+      <div class="min-h-full">
+        <div class="bg-indigo-600 pb-32">
+  
+            <header class="py-10">
+              <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+                <div class="flex justify-between items-center">
+                  <a href="{{ url_for('index') }}">
+                    <h1 class="text-3xl font-bold tracking-tight text-white">ℳℰℳℰS</h1>
+                  </a>
+                  <div>
+                    <form action="{{ url_for('text_query') }}" method="get" class="flex">
+                      <input type="text" name="text" placeholder="Search memes..." class="rounded-l-lg p-2 border-t mr-0 border-b border-l text-gray-800 border-gray-200 bg-white" />
+                      <button type="submit" class="px-8 rounded-r-lg bg-yellow-400  text-gray-800 font-bold p-2 uppercase border-yellow-500 border-t border-b border-r">Search</button>
+                    </form>
+                  </div>
+                  <a href="{{ url_for('random_meme') }}" class="text-white font-bold py-2 px-4 rounded">Random</a>
+                </div>
+              </div>
+            </header>
+        </div>
+  
+        <main class="-mt-32">
+          <div class="mx-auto sm:max-w-7xl px-4 pb-12 sm:px-6 lg:px-8">
+            <div class="rounded-lg bg-white px-5 py-6 shadow sm:px-6">
+                <header class="text-6xl pb-10">
+                  {% block header %}{% endblock %}
+                </header>
+                <div>
+              {% block content %}{% endblock %}
+                </div>
+            </div>
+          </div>
+        </main>
+      </div>
+  
+   {% block js %}{% endblock %}
+      </body>
+
+  [File Ends] templates/base.html
+
+  [File Begins] templates/display_meme.html
+  {% extends 'base.html' %}
+  
+  {% block title %}
+      Display Meme
+  {% endblock %}
+  
+  
+  {% block header %}
+      <h1>Display Meme</h1>
+  {% endblock %}
+  
+  {% block content %}
+  <img class="rounded border mx-auto block w-full sm:w-1/3 shadow" src="{{ meme_image }}" alt="meme" id="meme-image">
+  <script>
+    if (navigator.share) {
+      document.write(`
+        <div class="text-center">
+          <button onclick="shareMeme()" class="sm:text-2xl mx-auto border px-6 m-2 bg-indigo-300 hover:bg-indigo-600 hover:text-white shadow">Share</button>
+        </div>
+      `);
+    }
+  </script>
+  
+  <script>
+  function shareMeme() {
+    if (navigator.share) {
+      navigator.share({
+        // title: 'Check out this meme!',
+        // text: 'I found a funny meme to share with you!',
+        url: document.getElementById('meme-image').src
+      })
+      .then(() => console.log('Successful share'))
+      .catch(error => console.log('Error sharing:', error));
+    }
+  }
+  </script>
+  <br>
+  
+  
+  <h2>Find Similar Memes</h2>
+  <hr>
+  <div id="similar-memes" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mx-auto justify-center m-10">
+  {% for image in images %}
+  <a href="/meme/{{image.id}}">
+     <img class="w-64 border" src="{{ image.url }}" alt="meme" >
+  </a>
+  {% endfor %}
+  </div>
+  {% endblock %}
+
+  [File Ends] templates/display_meme.html
+
+  [File Begins] templates/index.html
+  {% extends 'base.html' %}
+  
+  {% block title %}
+      Meme Explorer
+  {% endblock %}
+  
+  
+  {% block header %}
+      <h1>Welcome to Meme Explorer</h1>
+  {% endblock %}
+  
+  {% block content %}
+  <h1 class="text-3xl">50 random memes</h1>
+  <div id="similar-memes" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mx-auto justify-center m-10">
+  
+  {% for image in images %}
+  
+  <a href="/meme/{{image}}">
+      <img class="w-64 border m-5" src="/meme-img/{{ image }}" alt="meme"  style="margin: 10px;">
+  </a>
+  {% endfor %}
+  </div>
+  {% endblock %}
+  
+  {% block js %}
+  {% endblock %}
+
+  [File Ends] templates/index.html
+
+  [File Begins] templates/query_results.html
+  {% extends 'base.html' %}
+  
+  {% block title %}
+      Query Results for {{text}}
+  {% endblock %}
+  
+  
+  {% block header %}
+      <h1>Query Results for {{text}}</h1>
+  {% endblock %}
+  
+  {% block content %}
+       <div id="similar-memes" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mx-auto justify-center m-10">
+      {% for image in images %}
+      <a href="/meme/{{image.id}}">
+          <img class="w-64 border" src="{{ image.url }}" alt="meme" style="margin: 10px;">
+      </a>
+      {% endfor %}
+       </div>
+  {% endblock %}
+  
+  {% block js %}
+  {% endblock %}
+
+  [File Ends] templates/query_results.html
+
+[File Begins] test-uuid.py
+import socket
+import uuid
+import logging
+
+host_name = socket.gethostname()
+unique_id = uuid.uuid5(uuid.NAMESPACE_DNS, host_name + str(uuid.getnode()))
+print(f"Running on machine ID: {unique_id}")
+
+[File Ends] test-uuid.py
+
+[File Begins] webs.py
+from flask import Flask, render_template, request, redirect, url_for
+import os
+import chromadb
+from chromadb.utils.embedding_functions import OpenCLIPEmbeddingFunction
+from chromadb.utils.data_loaders import ImageLoader
+from dotenv import load_dotenv
+import json
+import random
+import uuid
+from flask import jsonify
+import sqlite3
+from flask import g
+from flask import send_file
+import logging
+import open_clip
+import socket
+import torch
+from PIL import Image
+import logging
+import random
+from logging.handlers import RotatingFileHandler
+
+app = Flask(__name__)
+
+# Load environment variables
+load_dotenv()
+
+
+# Configure logging
+file_handler = RotatingFileHandler("chroma_db.log", maxBytes=10485760, backupCount=10)
+file_handler.setLevel(logging.INFO)
+file_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+file_handler.setFormatter(file_formatter)
+
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+console_handler.setFormatter(console_formatter)
+
+logger = logging.getLogger("app")
+logger.setLevel(logging.INFO)
+logger.addHandler(file_handler)
+logger.addHandler(console_handler)
+
+# Load environment variables
+load_dotenv()
+
+# Generate unique ID for the machine
+host_name = socket.gethostname()
+unique_id = uuid.uuid5(uuid.NAMESPACE_DNS, host_name + str(uuid.getnode()))
+unique_id = "f460c7cf-07f1-5306-85e3-1b9aef718dcd"
+logger.info(f"Running on machine ID: {unique_id}")
+
+# Retrieve values from .env
+data_path = os.getenv("DATA_DIR", "./")
+sqlite_db_filename = os.getenv("DB_FILENAME", "images.db")
+filelist_cache_filename = os.getenv("CACHE_FILENAME", "filelist_cache.msgpack")
+directory = os.getenv("IMAGE_DIRECTORY", "images")
+image_directory = os.getenv("IMAGE_DIRECTORY", "images")
+embedding_server_url = os.getenv("EMBEDDING_SERVER")
+chroma_path = os.getenv("CHROME_PATH", "./chroma")
+chrome_collection_name = os.getenv("CHROME_COLLECTION", "images")
+
+# Append the unique ID to the db file path and cache file path
+sqlite_db_filepath = f"{data_path}{str(unique_id)}_{sqlite_db_filename}"
+filelist_cache_filepath = os.path.join(
+    data_path, f"{unique_id}_{filelist_cache_filename}"
+)
+model_name = "ViT-SO400M-14-SigLIP-384"
+device = "mps"
+num_results = 52
+
+try:
+    pretrained_models = dict(open_clip.list_pretrained())
+    if model_name not in pretrained_models:
+        raise ValueError(f"Model {model_name} is not available in pretrained models.")
+    model, _, preprocess = open_clip.create_model_and_transforms(
+        model_name,
+        device=device,
+        pretrained=pretrained_models[model_name],
+        precision="fp16",
+    )
+    model.eval()
+    model.to(device).float()  # Move model to device and convert to half precision
+    logging.debug(f"Model {model_name} loaded and moved to {device}")
+except Exception as e:
+    logging.error(f"Error loading model: {e}")
+    raise
+
+try:
+    tokenizer = open_clip.get_tokenizer(model_name)
+    logging.debug(f"Tokenizer for model {model_name} obtained")
+except Exception as e:
+    logging.error(f"Error obtaining tokenizer for model {model_name}: {e}")
+    raise
+
+# Setup ChromaDB
+
+embedding_function = OpenCLIPEmbeddingFunction(
+    model_name="ViT-SO400M-14-SigLIP-384", checkpoint="webli"
+)
+
+data_loader = ImageLoader()
+
+chroma_client = chromadb.PersistentClient(path=chroma_path)
+
+collection = chroma_client.get_or_create_collection(
+    name=chrome_collection_name,
+    embedding_function=embedding_function,
+    data_loader=data_loader,
+)
+
+
+# Load memes from JSON
+
+
+@app.teardown_appcontext
+def close_connection(exception):
+    db = getattr(g, "_database", None)
+    if db is not None:
+        db.close()
+
+
+@app.route("/")
+def index():
+    memes = collection.get()["ids"]
+    random_items = random.sample(memes, num_results)
+    print(random_items)
+    # Display a form or some introduction text
+    return render_template("index.html", images=random_items)
+
+
+@app.route("/meme/<filename>")
+def serve_specific_meme(filename):
+    # Construct the filepath and check if it exists
+    print(filename)
+
+    filepath = os.path.join(image_directory, filename)
+    if not os.path.exists(filepath):
+        return "Meme not found", 404
+
+    meme = collection.get(ids=[filename], include=["embeddings"])
+    results = collection.query(
+        query_embeddings=meme["embeddings"], n_results=(num_results + 1)
+    )
+
+    images = []
+    for ids in results["ids"]:
+        for id in ids:
+            # Adjust the path as needed
+            image_url = url_for("serve_meme_img", filename=id)
+            images.append({"url": image_url, "id": id})
+
+    # Use the proxy function to serve the meme image if it exists
+    image_url = url_for("serve_meme_img", filename=filename)
+
+    # Render the template with the specific meme image
+    return render_template("display_meme.html", meme_image=image_url, images=images[1:])
+
+
+@app.route("/random")
+def random_meme():
+    memes = collection.get()["ids"]
+    meme = random.choice(memes) if memes else None
+
+    if meme:
+        return redirect(url_for("serve_specific_meme", filename=meme))
+    else:
+        return "No memes found", 404
+
+
+@app.route("/text-query", methods=["GET"])
+def text_query():
+
+    # Assuming there's an input for embeddings; this part is tricky and needs customization
+    # You might need to adjust how embeddings are received or generated based on user input
+    text = request.args.get("text")  # Adjusted to use GET parameters
+
+    with torch.no_grad():
+        text_tokenized = tokenizer([text]).to(device)
+        text_features = model.encode_text(text_tokenized)
+        text_features /= text_features.norm(dim=-1, keepdim=True)
+        embeddings = text_features.cpu().numpy().tolist()
+        logging.debug("Embeddings generated successfully.")
+        print(embeddings)
+        results = collection.query(query_embeddings=embeddings, n_results=(num_results))
+
+    # results = collection.query(query_embeddings=embeddings, n_results=5)
+    images = []
+    for ids in results["ids"]:
+        for id in ids:
+            # Adjust the path as needed
+            image_url = url_for("serve_meme_img", filename=id)
+            images.append({"url": image_url, "id": id})
+
+    return render_template(
+        "query_results.html", images=images, text=text, title="Text Query Results"
+    )
+
+
+@app.route("/meme-img/<path:filename>")
+def serve_meme_img(filename):
+    """
+    Serve a meme image directly from the filesystem outside of the static directory.
+    """
+    # Construct the full file path. Be careful with security implications.
+    # Ensure that you validate `filename` to prevent directory traversal attacks.
+    print("filename", filename)
+
+    print("image_directory", image_directory)
+    filepath = os.path.join(image_directory, filename)
+    print("filepath", filepath)
+    if not os.path.exists(filepath):
+        # You can return a default image or a 404 error if the file does not exist.
+        return "Image not found", 404
+    return send_file(filepath)
+
+
+if __name__ == "__main__":
+    app.run(debug=True, host="0.0.0.0")
+
+[File Ends] webs.py
+
+
+<-- File Content Ends
+

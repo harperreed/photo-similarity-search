@@ -1,0 +1,5 @@
+chromadb
+open-clip-torch
+transformers
+python-dotenv
+flask
