@@ -218,9 +218,9 @@ def process_embeddings(photo):
 
     :param photo: A dictionary containing photo information.
     """
-    logger.info(f"Processing photo: {photo['filename']}")
+    logger.debug(f"Processing photo: {photo['filename']}")
     if photo['embeddings']:
-        logger.info(f"Photo {photo['filename']} already has embeddings. Skipping.")
+        logger.debug(f"Photo {photo['filename']} already has embeddings. Skipping.")
         return
 
     try:
@@ -229,7 +229,7 @@ def process_embeddings(photo):
         photo['embeddings'] = imemb
         update_db(photo)
         end_time = time.time()
-        logger.info(f"Processed embeddings for {photo['filename']} in {end_time - start_time:.5f} seconds")
+        logger.debug(f"Processed embeddings for {photo['filename']} in {end_time - start_time:.5f} seconds")
     except Exception as e:
         logger.error(f"Error generating embeddings for {photo['filename']}: {e}")
 
@@ -261,12 +261,18 @@ def main():
         # for photo in photos:
         #     photo['embeddings'] = msgpack.loads(photo['embeddings']) if photo['embeddings'] else []
 
+    num_photos = len(photos)
 
     logger.info(f"Loaded {len(photos)} photos from database")
     #cant't use ThreadPoolExecutor here because of the MLX memory thing
     start_time = time.time()
+    photo_ite = 0
     for photo in photos:
         process_embeddings(photo)
+        photo_ite += 1
+        if log_level != 'DEBUG':
+            if photo_ite % 100 == 0:
+                logger.info(f"Processed {photo_ite}/{num_photos} photos")
     end_time = time.time()
     logger.info(f"Generated embeddings for {len(photos)} photos in {end_time - start_time:.2f} seconds")
     connection.close()
@@ -279,23 +285,32 @@ def main():
 
     logger.info(f"Generated embeddings for {len(photos)} photos")
     start_time = time.time()
+
+    photo_ite = 0
     for photo in photos:
         # Skip processing if the photo does not have embeddings
         if not photo['embeddings']:
-            logger.debug(f"Photo {photo['filename']} has no embeddings. Skipping addition to Chroma.")
+            logger.debug(f"[{photo_ite}/{num_photos}] Photo {photo['filename']} has no embeddings. Skipping addition to Chroma.")
             continue
 
         try:
             # Add the photo's embeddings to the Chroma collection
+            item = collection.get(ids=[photo['filename']])
+            if item:
+                continue
             collection.add(
                 embeddings=[photo["embeddings"]],
                 documents=[photo['filename']],
                 ids=[photo['filename']]
             )
-            logger.debug(f"Added embedding to Chroma for {photo['filename']}")
+            logger.debug(f"[{photo_ite}/{num_photos}] Added embedding to Chroma for {photo['filename']}")
+            photo_ite += 1
+            if log_level != 'DEBUG':
+                if photo_ite % 100 == 0:
+                    logger.info(f"Processed {photo_ite}/{num_photos} photos")
         except Exception as e:
             # Log an error if the addition to Chroma fails
-            logger.error(f"Failed to add embedding to Chroma for {photo['filename']}: {e}")
+            logger.error(f"[{photo_ite}/{num_photos}] Failed to add embedding to Chroma for {photo['filename']}: {e}")
     end_time = time.time()
     logger.info(f"Inserted embeddings {len(photos)} photos into Chroma in {end_time - start_time:.2f} seconds")
 

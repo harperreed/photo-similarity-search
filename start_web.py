@@ -29,7 +29,7 @@ unique_id = uuid.uuid5(uuid.NAMESPACE_DNS, host_name + str(uuid.getnode()))
 
 # Configure logging
 log_app_name = "web"
-log_level = os.getenv('LOG_LEVEL', 'INFO')
+log_level = os.getenv('LOG_LEVEL', 'DEBUG')
 log_level = getattr(logging, log_level.upper())
 
 file_handler = RotatingFileHandler(f"{log_app_name}_{unique_id}.log", maxBytes=10485760, backupCount=10)
@@ -59,7 +59,7 @@ DATA_DIR = os.getenv('DATA_DIR', './')
 SQLITE_DB_FILENAME = os.getenv('DB_FILENAME', 'images.db')
 FILELIST_CACHE_FILENAME = os.getenv('CACHE_FILENAME', 'filelist_cache.msgpack')
 SOURCE_IMAGE_DIRECTORY = os.getenv('IMAGE_DIRECTORY', 'images')
-CHROMA_DB_PATH = os.getenv('CHROME_PATH', f"{DATA_DIR}/{unique_id}_chroma")
+CHROMA_DB_PATH = os.getenv('CHROME_PATH', f"{DATA_DIR}{unique_id}_chroma")
 CHROMA_COLLECTION_NAME = os.getenv('CHROME_COLLECTION', "images")
 NUM_IMAGE_RESULTS = int(os.getenv('NUM_IMAGE_RESULTS', 52))
 
@@ -71,6 +71,7 @@ logger.debug(f"Configuration - CACHE_FILENAME: {FILELIST_CACHE_FILENAME}")
 logger.debug(f"Configuration - SOURCE_IMAGE_DIRECTORY: {SOURCE_IMAGE_DIRECTORY}")
 logger.debug(f"Configuration - CHROME_PATH: {CHROMA_DB_PATH}")
 logger.debug(f"Configuration - CHROME_COLLECTION: {CHROMA_COLLECTION_NAME}")
+logger.debug(f"Configuration - NUM_IMAGE_RESULTS: {NUM_IMAGE_RESULTS}")
 logger.debug("Configuration loaded.")
 
 # Append the unique ID to the db file path and cache file path
@@ -115,6 +116,8 @@ def close_connection(exception):
 @app.route("/")
 def index():
     images = collection.get()["ids"]
+    print(NUM_IMAGE_RESULTS)
+    print(len(images))
     random_items = random.sample(images, NUM_IMAGE_RESULTS)
     print(random_items)
     # Display a form or some introduction text
