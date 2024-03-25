@@ -64,4 +64,3 @@ for m in memes:
         ids=[m['id']]
     )
     print(f"Added embedding to Chroma for {m['id']}")
-

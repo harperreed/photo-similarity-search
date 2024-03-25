@@ -15,63 +15,62 @@ from logging.handlers import RotatingFileHandler
 import chromadb
 import json
 import numpy as np
-from chromadb.utils.embedding_functions import OpenCLIPEmbeddingFunction
-from chromadb.utils.data_loaders import ImageLoader
-from PIL import Image
 
 import mlx_clip
 
 
-
+# Generate unique ID for the machine
 host_name = socket.gethostname()
 unique_id = uuid.uuid5(uuid.NAMESPACE_DNS, host_name + str(uuid.getnode()))
 
-
 # Configure logging
-file_handler = RotatingFileHandler(f"app_{unique_id}.log", maxBytes=10485760, backupCount=10)
-file_handler.setLevel(logging.DEBUG)
+log_app_name = "app"
+log_level = os.getenv('LOG_LEVEL', 'INFO')
+log_level = getattr(logging, log_level.upper())
+
+file_handler = RotatingFileHandler(f"{log_app_name}_{unique_id}.log", maxBytes=10485760, backupCount=10)
+file_handler.setLevel(log_level)
 file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 file_handler.setFormatter(file_formatter)
+
 console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.DEBUG)
+console_handler.setLevel(log_level)
 console_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 console_handler.setFormatter(console_formatter)
-logger = logging.getLogger('app')
-logger.setLevel(logging.DEBUG)
+
+logger = logging.getLogger(log_app_name)
+logger.setLevel(log_level)
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
 
 # Load environment variables
 load_dotenv()
 
-# Generate unique ID for the machine
-host_name = socket.gethostname()
-unique_id = uuid.uuid5(uuid.NAMESPACE_DNS, host_name + str(uuid.getnode()))
+
+
 logger.info(f"Running on machine ID: {unique_id}")
 
 # Retrieve values from .env
-data_path = os.getenv('DATA_DIR', './')
-sqlite_db_filename = os.getenv('DB_FILENAME', 'images.db')
-filelist_cache_filename = os.getenv('CACHE_FILENAME', 'filelist_cache.msgpack')
-image_directory = os.getenv('IMAGE_DIRECTORY', 'images')
-embedding_server_url = os.getenv('EMBEDDING_SERVER')
-chroma_path = os.getenv('CHROME_PATH', "./chroma")
-chrome_collection_name = os.getenv('CHROME_COLLECTION', "images")
+DATA_DIR = os.getenv('DATA_DIR', './')
+SQLITE_DB_FILENAME = os.getenv('DB_FILENAME', 'images.db')
+FILELIST_CACHE_FILENAME = os.getenv('CACHE_FILENAME', 'filelist_cache.msgpack')
+SOURCE_IMAGE_DIRECTORY = os.getenv('IMAGE_DIRECTORY', 'images')
+CHROMA_DB_PATH = os.getenv('CHROME_PATH', f"{DATA_DIR}/{unique_id}_chroma")
+CHROMA_COLLECTION_NAME = os.getenv('CHROME_COLLECTION', "images")
 
 logger.debug("Configuration loaded.")
 # Log the configuration for debugging
-logger.debug(f"Configuration - DATA_DIR: {data_path}")
-logger.debug(f"Configuration - DB_FILENAME: {sqlite_db_filename}")
-logger.debug(f"Configuration - CACHE_FILENAME: {filelist_cache_filename}")
-logger.debug(f"Configuration - IMAGE_DIRECTORY: {image_directory}")
-logger.debug(f"Configuration - EMBEDDING_SERVER: {embedding_server_url}")
-logger.debug(f"Configuration - CHROME_PATH: {chroma_path}")
-logger.debug(f"Configuration - CHROME_COLLECTION: {chrome_collection_name}")
+logger.debug(f"Configuration - DATA_DIR: {DATA_DIR}")
+logger.debug(f"Configuration - DB_FILENAME: {SQLITE_DB_FILENAME}")
+logger.debug(f"Configuration - CACHE_FILENAME: {FILELIST_CACHE_FILENAME}")
+logger.debug(f"Configuration - IMAGE_DIRECTORY: {SOURCE_IMAGE_DIRECTORY}")
+logger.debug(f"Configuration - CHROME_PATH: {CHROMA_DB_PATH}")
+logger.debug(f"Configuration - CHROME_COLLECTION: {CHROMA_COLLECTION_NAME}")
 logger.debug("Configuration loaded.")
 
 # Append the unique ID to the db file path and cache file path
-sqlite_db_filepath = f"{data_path}{str(unique_id)}_{sqlite_db_filename}"
-filelist_cache_filepath = os.path.join(data_path, f"{unique_id}_{filelist_cache_filename}")
+SQLITE_DB_FILEPATH = f"{DATA_DIR}{str(unique_id)}_{SQLITE_DB_FILENAME}"
+FILELIST_CACHE_FILEPATH = os.path.join(DATA_DIR, f"{unique_id}_{FILELIST_CACHE_FILENAME}")
 
 # Graceful shutdown handler
 def graceful_shutdown(signum, frame):
@@ -85,12 +84,12 @@ def graceful_shutdown(signum, frame):
 signal.signal(signal.SIGINT, graceful_shutdown)
 signal.signal(signal.SIGTERM, graceful_shutdown)
 
-
+#Instantiate MLX Clip model
 clip = mlx_clip.mlx_clip("mlx_model")
 
 
 # Create a connection pool for the SQLite database
-connection = sqlite3.connect(sqlite_db_filepath)
+connection = sqlite3.connect(SQLITE_DB_FILEPATH)
 
 def create_table():
     """
@@ -111,7 +110,7 @@ def create_table():
         connection.execute('CREATE INDEX IF NOT EXISTS idx_file_path ON images (file_path)')
     logger.info("Table 'images' ensured to exist.")
 
-create_table()
+
 
 def file_generator(directory):
     """
@@ -171,7 +170,7 @@ def update_db(image):
     """
     try:
         embeddings_blob = sqlite3.Binary(msgpack.dumps(image.get('embeddings', [])))
-        with sqlite3.connect(sqlite_db_filepath) as conn:
+        with sqlite3.connect(SQLITE_DB_FILEPATH) as conn:
             conn.execute("UPDATE images SET embeddings = ? WHERE filename = ?",
                          (embeddings_blob, image['filename']))
         logger.debug(f"Database updated successfully for image: {image['filename']}")
@@ -191,7 +190,7 @@ def process_image(file_path):
     file_md5 = hashlib.md5(file_content).hexdigest()
     conn = None
     try:
-        conn = sqlite3.connect(sqlite_db_filepath)
+        conn = sqlite3.connect(SQLITE_DB_FILEPATH)
         with conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -204,9 +203,9 @@ def process_image(file_path):
                     INSERT INTO images (filename, file_path, file_date, file_md5)
                     VALUES (?, ?, ?, ?)
                 ''', (file, file_path, file_date, file_md5))
-                logger.info(f'Inserted {file} with metadata into the database.')
+                logger.debug(f'Inserted {file} with metadata into the database.')
             else:
-                logger.info(f'File {file} already exists in the database. Skipping insertion.')
+                logger.debug(f'File {file} already exists in the database. Skipping insertion.')
     except sqlite3.Error as e:
         logger.error(f'Error processing image {file}: {e}')
     finally:
@@ -223,8 +222,9 @@ def process_embeddings(photo):
     if photo['embeddings']:
         logger.info(f"Photo {photo['filename']} already has embeddings. Skipping.")
         return
-    start_time = time.time()
+
     try:
+        start_time = time.time()
         imemb = clip.generate_image_embedding(photo['file_path'])
         photo['embeddings'] = imemb
         update_db(photo)
@@ -232,18 +232,20 @@ def process_embeddings(photo):
         logger.info(f"Processed embeddings for {photo['filename']} in {end_time - start_time:.5f} seconds")
     except Exception as e:
         logger.error(f"Error generating embeddings for {photo['filename']}: {e}")
-    # end_time = time.time()
-    # logger.info(f"Processed embeddings for {photo['filename']} in {end_time - start_time:.5f} seconds")
+
 
 def main():
     """
     Main function to process images and embeddings.
     """
     cache_start_time = time.time()
-    cached_files = hydrate_cache(image_directory, filelist_cache_filepath)
+    cached_files = hydrate_cache(SOURCE_IMAGE_DIRECTORY, FILELIST_CACHE_FILEPATH)
     cache_end_time = time.time()
     logger.info(f"Cache operation took {cache_end_time - cache_start_time:.2f} seconds")
-    logger.info(f"Directory has {len(cached_files)} files: {image_directory}")
+    logger.info(f"Directory has {len(cached_files)} files: {SOURCE_IMAGE_DIRECTORY}")
+
+    create_table()
+
     with ThreadPoolExecutor() as executor:
         futures = []
         for file_path in cached_files:
@@ -256,17 +258,46 @@ def main():
         cursor = connection.cursor()
         cursor.execute("SELECT filename, file_path, file_date, file_md5, embeddings FROM images")
         photos = [{'filename': row[0], 'file_path': row[1], 'file_date': row[2], 'file_md5': row[3], 'embeddings': msgpack.loads(row[4]) if row[4] else []} for row in cursor.fetchall()]
-        for photo in photos:
-            photo['embeddings'] = msgpack.loads(photo['embeddings']) if photo['embeddings'] else []
+        # for photo in photos:
+        #     photo['embeddings'] = msgpack.loads(photo['embeddings']) if photo['embeddings'] else []
+
+
     logger.info(f"Loaded {len(photos)} photos from database")
-    start_time = time.time()
     #cant't use ThreadPoolExecutor here because of the MLX memory thing
+    start_time = time.time()
     for photo in photos:
         process_embeddings(photo)
     end_time = time.time()
     logger.info(f"Generated embeddings for {len(photos)} photos in {end_time - start_time:.2f} seconds")
     connection.close()
     logger.info("Database connection pool closed.")
+
+
+    logger.info(f"Initializing Chrome DB:  {CHROMA_COLLECTION_NAME}")
+    client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
+    collection = client.get_or_create_collection(name=CHROMA_COLLECTION_NAME)
+
+    logger.info(f"Generated embeddings for {len(photos)} photos")
+    start_time = time.time()
+    for photo in photos:
+        # Skip processing if the photo does not have embeddings
+        if not photo['embeddings']:
+            logger.debug(f"Photo {photo['filename']} has no embeddings. Skipping addition to Chroma.")
+            continue
+
+        try:
+            # Add the photo's embeddings to the Chroma collection
+            collection.add(
+                embeddings=[photo["embeddings"]],
+                documents=[photo['filename']],
+                ids=[photo['filename']]
+            )
+            logger.debug(f"Added embedding to Chroma for {photo['filename']}")
+        except Exception as e:
+            # Log an error if the addition to Chroma fails
+            logger.error(f"Failed to add embedding to Chroma for {photo['filename']}: {e}")
+    end_time = time.time()
+    logger.info(f"Inserted embeddings {len(photos)} photos into Chroma in {end_time - start_time:.2f} seconds")
 
 if __name__ == "__main__":
     main()

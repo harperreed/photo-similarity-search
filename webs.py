@@ -1,117 +1,108 @@
-from flask import Flask, render_template, request, redirect, url_for
-import os
-import chromadb
-from chromadb.utils.embedding_functions import OpenCLIPEmbeddingFunction
-from chromadb.utils.data_loaders import ImageLoader
-from dotenv import load_dotenv
+import hashlib
 import json
-import random
-import uuid
-from flask import jsonify
-import sqlite3
-from flask import g
-from flask import send_file
 import logging
-import open_clip
+import os
+import requests
+import random
+import signal
 import socket
-import torch
-from PIL import Image
-import logging
-import random
+import sqlite3
+import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from dotenv import load_dotenv
+from flask import jsonify, g, send_file
+from flask import Flask, render_template, request, redirect, url_for
+from io import BytesIO
 from logging.handlers import RotatingFileHandler
+import msgpack
+import numpy as np
+import chromadb
 
-app = Flask(__name__)
+import mlx_clip
 
-# Load environment variables
-load_dotenv()
 
+
+# Generate unique ID for the machine
+host_name = socket.gethostname()
+unique_id = uuid.uuid5(uuid.NAMESPACE_DNS, host_name + str(uuid.getnode()))
 
 # Configure logging
-file_handler = RotatingFileHandler("chroma_db.log", maxBytes=10485760, backupCount=10)
-file_handler.setLevel(logging.INFO)
-file_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+log_app_name = "web"
+log_level = os.getenv('LOG_LEVEL', 'INFO')
+log_level = getattr(logging, log_level.upper())
+
+file_handler = RotatingFileHandler(f"{log_app_name}_{unique_id}.log", maxBytes=10485760, backupCount=10)
+file_handler.setLevel(log_level)
+file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 file_handler.setFormatter(file_formatter)
 
 console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.INFO)
-console_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+console_handler.setLevel(log_level)
+console_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 console_handler.setFormatter(console_formatter)
 
-logger = logging.getLogger("app")
-logger.setLevel(logging.INFO)
+logger = logging.getLogger(log_app_name)
+logger.setLevel(log_level)
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
 
 # Load environment variables
 load_dotenv()
 
-# Generate unique ID for the machine
-host_name = socket.gethostname()
-unique_id = uuid.uuid5(uuid.NAMESPACE_DNS, host_name + str(uuid.getnode()))
-unique_id = "f460c7cf-07f1-5306-85e3-1b9aef718dcd"
+
+
 logger.info(f"Running on machine ID: {unique_id}")
 
 # Retrieve values from .env
-data_path = os.getenv("DATA_DIR", "./")
-sqlite_db_filename = os.getenv("DB_FILENAME", "images.db")
-filelist_cache_filename = os.getenv("CACHE_FILENAME", "filelist_cache.msgpack")
-directory = os.getenv("IMAGE_DIRECTORY", "images")
-image_directory = os.getenv("IMAGE_DIRECTORY", "images")
-embedding_server_url = os.getenv("EMBEDDING_SERVER")
-chroma_path = os.getenv("CHROME_PATH", "./chroma")
-chrome_collection_name = os.getenv("CHROME_COLLECTION", "images")
+DATA_DIR = os.getenv('DATA_DIR', './')
+SQLITE_DB_FILENAME = os.getenv('DB_FILENAME', 'images.db')
+FILELIST_CACHE_FILENAME = os.getenv('CACHE_FILENAME', 'filelist_cache.msgpack')
+SOURCE_IMAGE_DIRECTORY = os.getenv('IMAGE_DIRECTORY', 'images')
+CHROMA_DB_PATH = os.getenv('CHROME_PATH', f"{DATA_DIR}/{unique_id}_chroma")
+CHROMA_COLLECTION_NAME = os.getenv('CHROME_COLLECTION', "images")
+NUM_IMAGE_RESULTS = int(os.getenv('NUM_IMAGE_RESULTS', 52))
+
+logger.debug("Configuration loaded.")
+# Log the configuration for debugging
+logger.debug(f"Configuration - DATA_DIR: {DATA_DIR}")
+logger.debug(f"Configuration - DB_FILENAME: {SQLITE_DB_FILENAME}")
+logger.debug(f"Configuration - CACHE_FILENAME: {FILELIST_CACHE_FILENAME}")
+logger.debug(f"Configuration - SOURCE_IMAGE_DIRECTORY: {SOURCE_IMAGE_DIRECTORY}")
+logger.debug(f"Configuration - CHROME_PATH: {CHROMA_DB_PATH}")
+logger.debug(f"Configuration - CHROME_COLLECTION: {CHROMA_COLLECTION_NAME}")
+logger.debug("Configuration loaded.")
 
 # Append the unique ID to the db file path and cache file path
-sqlite_db_filepath = f"{data_path}{str(unique_id)}_{sqlite_db_filename}"
-filelist_cache_filepath = os.path.join(
-    data_path, f"{unique_id}_{filelist_cache_filename}"
-)
-model_name = "ViT-SO400M-14-SigLIP-384"
-device = "mps"
-num_results = 52
+SQLITE_DB_FILEPATH = f"{DATA_DIR}{str(unique_id)}_{SQLITE_DB_FILENAME}"
+FILELIST_CACHE_FILEPATH = os.path.join(DATA_DIR, f"{unique_id}_{FILELIST_CACHE_FILENAME}")
 
-try:
-    pretrained_models = dict(open_clip.list_pretrained())
-    if model_name not in pretrained_models:
-        raise ValueError(f"Model {model_name} is not available in pretrained models.")
-    model, _, preprocess = open_clip.create_model_and_transforms(
-        model_name,
-        device=device,
-        pretrained=pretrained_models[model_name],
-        precision="fp16",
-    )
-    model.eval()
-    model.to(device).float()  # Move model to device and convert to half precision
-    logging.debug(f"Model {model_name} loaded and moved to {device}")
-except Exception as e:
-    logging.error(f"Error loading model: {e}")
-    raise
+# Create a connection pool for the SQLite database
+connection = sqlite3.connect(SQLITE_DB_FILEPATH)
 
-try:
-    tokenizer = open_clip.get_tokenizer(model_name)
-    logging.debug(f"Tokenizer for model {model_name} obtained")
-except Exception as e:
-    logging.error(f"Error obtaining tokenizer for model {model_name}: {e}")
-    raise
+app = Flask(__name__)
 
-# Setup ChromaDB
+# Graceful shutdown handler
+def graceful_shutdown(signum, frame):
+    logger.info("Caught signal, shutting down gracefully...")
+    if 'conn_pool' in globals():
+        connection.close()
+        logger.info("Database connection pool closed.")
+    exit(0)
 
-embedding_function = OpenCLIPEmbeddingFunction(
-    model_name="ViT-SO400M-14-SigLIP-384", checkpoint="webli"
-)
+# Register the signal handlers for graceful shutdown
+signal.signal(signal.SIGINT, graceful_shutdown)
+signal.signal(signal.SIGTERM, graceful_shutdown)
 
-data_loader = ImageLoader()
+#Instantiate MLX Clip model
+clip = mlx_clip.mlx_clip("mlx_model")
 
-chroma_client = chromadb.PersistentClient(path=chroma_path)
-
-collection = chroma_client.get_or_create_collection(
-    name=chrome_collection_name,
-    embedding_function=embedding_function,
-    data_loader=data_loader,
-)
+logger.info(f"Initializing Chrome DB:  {CHROMA_COLLECTION_NAME}")
+client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
+collection = client.get_or_create_collection(name=CHROMA_COLLECTION_NAME)
 
 
-# Load memes from JSON
+# WEBS
 
 
 @app.teardown_appcontext
@@ -123,50 +114,51 @@ def close_connection(exception):
 
 @app.route("/")
 def index():
-    memes = collection.get()["ids"]
-    random_items = random.sample(memes, num_results)
+    images = collection.get()["ids"]
+    random_items = random.sample(images, NUM_IMAGE_RESULTS)
     print(random_items)
     # Display a form or some introduction text
     return render_template("index.html", images=random_items)
 
 
-@app.route("/meme/<filename>")
-def serve_specific_meme(filename):
+@app.route("/image/<filename>")
+def serve_specific_image(filename):
     # Construct the filepath and check if it exists
     print(filename)
 
-    filepath = os.path.join(image_directory, filename)
+    filepath = os.path.join(SOURCE_IMAGE_DIRECTORY, filename)
+    print(filepath)
     if not os.path.exists(filepath):
-        return "Meme not found", 404
+        return "Image not found", 404
 
-    meme = collection.get(ids=[filename], include=["embeddings"])
+    image = collection.get(ids=[filename], include=["embeddings"])
     results = collection.query(
-        query_embeddings=meme["embeddings"], n_results=(num_results + 1)
+        query_embeddings=image["embeddings"], n_results=(NUM_IMAGE_RESULTS + 1)
     )
 
     images = []
     for ids in results["ids"]:
         for id in ids:
             # Adjust the path as needed
-            image_url = url_for("serve_meme_img", filename=id)
+            image_url = url_for("serve_image", filename=id)
             images.append({"url": image_url, "id": id})
 
-    # Use the proxy function to serve the meme image if it exists
-    image_url = url_for("serve_meme_img", filename=filename)
+    # Use the proxy function to serve the image if it exists
+    image_url = url_for("serve_image", filename=filename)
 
-    # Render the template with the specific meme image
-    return render_template("display_meme.html", meme_image=image_url, images=images[1:])
+    # Render the template with the specific image
+    return render_template("display_image.html", image=image_url, images=images[1:])
 
 
 @app.route("/random")
-def random_meme():
-    memes = collection.get()["ids"]
-    meme = random.choice(memes) if memes else None
+def random_image():
+    images = collection.get()["ids"]
+    image = random.choice(images) if images else None
 
-    if meme:
-        return redirect(url_for("serve_specific_meme", filename=meme))
+    if image:
+        return redirect(url_for("serve_specific_image", filename=image))
     else:
-        return "No memes found", 404
+        return "No images found", 404
 
 
 @app.route("/text-query", methods=["GET"])
@@ -176,21 +168,15 @@ def text_query():
     # You might need to adjust how embeddings are received or generated based on user input
     text = request.args.get("text")  # Adjusted to use GET parameters
 
-    with torch.no_grad():
-        text_tokenized = tokenizer([text]).to(device)
-        text_features = model.encode_text(text_tokenized)
-        text_features /= text_features.norm(dim=-1, keepdim=True)
-        embeddings = text_features.cpu().numpy().tolist()
-        logging.debug("Embeddings generated successfully.")
-        print(embeddings)
-        results = collection.query(query_embeddings=embeddings, n_results=(num_results))
+    # Use the MLX Clip model to generate embeddings from the text
+    embeddings = clip.generate_text_embedding(text)
 
-    # results = collection.query(query_embeddings=embeddings, n_results=5)
+    results = collection.query(query_embeddings=embeddings, n_results=(NUM_IMAGE_RESULTS + 1))
     images = []
     for ids in results["ids"]:
         for id in ids:
             # Adjust the path as needed
-            image_url = url_for("serve_meme_img", filename=id)
+            image_url = url_for("serve_image", filename=id)
             images.append({"url": image_url, "id": id})
 
     return render_template(
@@ -198,17 +184,17 @@ def text_query():
     )
 
 
-@app.route("/meme-img/<path:filename>")
-def serve_meme_img(filename):
+@app.route("/img/<path:filename>")
+def serve_image(filename):
     """
-    Serve a meme image directly from the filesystem outside of the static directory.
+    Serve a image directly from the filesystem outside of the static directory.
     """
     # Construct the full file path. Be careful with security implications.
     # Ensure that you validate `filename` to prevent directory traversal attacks.
     print("filename", filename)
 
-    print("image_directory", image_directory)
-    filepath = os.path.join(image_directory, filename)
+    print("SOURCE_IMAGE_DIRECTORY", SOURCE_IMAGE_DIRECTORY)
+    filepath = os.path.join(SOURCE_IMAGE_DIRECTORY, filename)
     print("filepath", filepath)
     if not os.path.exists(filepath):
         # You can return a default image or a 404 error if the file does not exist.
