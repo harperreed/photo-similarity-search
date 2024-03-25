@@ -1,20 +1,53 @@
-# Meme Explorer
+# 📸 Embed-Photos Repository
 
-Meme Explorer is a web application that allows users to search and explore a collection of memes using text queries and image similarities. The application utilizes ChromaDB for efficient vector similarity search and SQLite for metadata storage.
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/harperreed/embed-photos/blob/main/LICENSE)
 
-## Features
+Welcome to the Embed-Photos repository! 🎉 This project showcases a semantic image search engine that leverages the power of the CLIP (Contrastive Language-Image Pre-training) model to find similar images based on textual descriptions. 🔍🖼️
 
-- Browse a random selection of memes on the homepage
-- Search for memes using text queries
-- View similar memes based on image embeddings
-- Share memes with others
-- Access random memes with a single click
+## 🌟 Features
 
-## Installation
+- 🚀 Fast and efficient image search using the CLIP model
+- 💾 Persistent storage of image embeddings using SQLite and Chroma
+- 🌐 Web interface for easy interaction and exploration
+- 🔒 Secure image serving and handling
+- 📊 Logging and monitoring for performance analysis
+- 🔧 Configurable settings using environment variables
+
+## 📂 Repository Structure
+
+The repository is organized as follows:
+
+```
+embed-photos/
+├── mlx_clip/
+│   ├── README.md
+│   ├── __init__.py
+│   ├── image_processor.py
+│   ├── model.py
+│   └── tokenizer.py
+├── templates/
+│   ├── base.html
+│   ├── display_image.html
+│   ├── index.html
+│   └── query_results.html
+├── generate_embeddings.py
+├── requirements.txt
+└── start_web.py
+```
+
+- `mlx_clip/`: Contains the MLX_CLIP library for generating image and text embeddings.
+- `templates/`: Contains HTML templates for the web interface.
+- `generate_embeddings.py`: Script to generate image embeddings and store them in the database.
+- `requirements.txt`: Lists the required Python dependencies.
+- `start_web.py`: Starts the web application for semantic image search.
+
+## 🚀 Getting Started
+
+To get started with the Embed-Photos project, follow these steps:
 
 1. Clone the repository:
    ```
-   git clone https://github.com/your-username/meme-explorer.git
+   git clone https://github.com/harperreed/embed-photos.git
    ```
 
 2. Install the required dependencies:
@@ -22,68 +55,36 @@ Meme Explorer is a web application that allows users to search and explore a col
    pip install -r requirements.txt
    ```
 
-3. Set up the necessary environment variables by creating a `.env` file in the project root directory with the following contents:
-   ```
-   DATA_DIR=./
-   DB_FILENAME=images.db
-   CACHE_FILENAME=filelist_cache.msgpack
-   IMAGE_DIRECTORY=images
-   EMBEDDING_SERVER=http://localhost:5000
-   CHROME_PATH=./chroma
-   CHROME_COLLECTION=images
-   ```
+3. Set up the necessary environment variables:
+   - `DATA_DIR`: Directory to store data files.
+   - `DB_FILENAME`: Name of the SQLite database file.
+   - `CACHE_FILENAME`: Name of the cache file for file list.
+   - `IMAGE_DIRECTORY`: Directory containing the images to be indexed.
+   - `CHROME_PATH`: Path to store the Chroma database.
+   - `CHROME_COLLECTION`: Name of the Chroma collection.
 
-4. Populate the image directory with your meme collection.
-
-5. Run the scripts to generate the cache, database, and embeddings:
+4. Generate image embeddings:
    ```
-   python generate_cache.py
-   python generate_db.py
-   python generate_embeddings_db.py
-   python generate_chroma_db.py
+   python generate_embeddings.py
    ```
 
-6. Start the web application:
+5. Start the web application:
    ```
-   python webs.py
+   python start_web.py
    ```
 
-7. Access the application in your web browser at `http://localhost:5000`.
+6. Access the web interface in your browser at `http://localhost:5000`.
 
-## Usage
+## 🤝 Contributing
 
-- Browse the homepage to view a random selection of memes.
-- Use the search bar to enter text queries and find relevant memes.
-- Click on a meme to view it in full size and explore similar memes.
-- Click the "Random" button to discover a random meme from the collection.
-- Share memes with others using the share button (if supported by the browser).
+Contributions to the Embed-Photos project are welcome! If you encounter any issues or have suggestions for improvements, please open an issue or submit a pull request. Make sure to follow the existing code style and provide appropriate documentation for your changes.
 
-## Project Structure
+## 📄 License
 
-- `static/`: Directory for static files (CSS, JavaScript, images, etc.).
-- `templates/`: Directory for HTML templates.
-- `images/`: Directory containing the meme image files.
-- `webs.py`: Main Flask application file.
-- `generate_cache.py`: Script to generate the file cache.
-- `generate_db.py`: Script to populate the SQLite database with meme metadata.
-- `generate_embeddings_db.py`: Script to generate image embeddings and store them in the database.
-- `generate_chroma_db.py`: Script to load embeddings into ChromaDB for similarity search.
-- `requirements.txt`: File listing the required Python dependencies.
-- `.env`: Environment configuration file.
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for more details.
 
-## Dependencies
+## 🙏 Acknowledgments
 
-- Flask: Web framework for building the application.
-- ChromaDB: Vector database for efficient similarity search.
-- SQLite: Lightweight relational database for storing meme metadata.
-- OpenCLIP: Library for generating image embeddings.
-- PyTorch: Deep learning framework for running the OpenCLIP model.
+The Embed-Photos project builds upon the work of the CLIP model and leverages various open-source libraries. We extend our gratitude to the authors and contributors of these projects.
 
-## License
-
-This project is licensed under the [MIT License](LICENSE).
-
-## Acknowledgements
-
-- The meme collection used in this project is for demonstration purposes only.
-- The OpenCLIP model and pretrained weights are provided by the OpenCLIP project.
+Happy searching! 🔍✨
