@@ -1,23 +1,28 @@
 {% extends 'base.html' %}
 
-{% block title %}
-    Query Results for {{text}}
-{% endblock %}
+{% block title %} Results for {{text}} {% endblock %}
 
 
 {% block header %}
-    <h1>Query Results for {{text}}</h1>
+<h1>Results for {{text}}</h1>
 {% endblock %}
 
 {% block content %}
-     <div id="similar-memes" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mx-auto justify-center m-10">
+<div
+    id="similar-images"
+    class="m-10 mx-auto grid grid-cols-1 justify-center gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4"
+>
     {% for image in images %}
-    <a href="/meme/{{image.id}}">
-        <img class="w-64 border" src="{{ image.url }}" alt="meme" style="margin: 10px;">
+    <a href="/image/{{image.id}}">
+        <img
+            class="w-64 border"
+            src="{{ image.url }}"
+            alt="image"
+            style="margin: 10px"
+        />
     </a>
     {% endfor %}
-     </div>
+</div>
 {% endblock %}
 
-{% block js %}
-{% endblock %}
+{% block js %} {% endblock %}

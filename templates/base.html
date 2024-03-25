@@ -1,47 +1,68 @@
 <!doctype html>
 <html class="h-full bg-gray-100">
-
     <head>
-<title>{% block title %}{% endblock %} ~ ℳℰℳℰS</title>
-    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+        <title>{% block title %}{% endblock %} ~ Semantic Image Search</title>
+        <link
+            href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css"
+            rel="stylesheet"
+        />
     </head>
 
- <body class="h-full">
-
-    <div class="min-h-full">
-      <div class="bg-indigo-600 pb-32">
-
-          <header class="py-10">
-            <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-              <div class="flex justify-between items-center">
-                <a href="{{ url_for('index') }}">
-                  <h1 class="text-3xl font-bold tracking-tight text-white">ℳℰℳℰS</h1>
-                </a>
-                <div>
-                  <form action="{{ url_for('text_query') }}" method="get" class="flex">
-                    <input type="text" name="text" placeholder="Search memes..." class="rounded-l-lg p-2 border-t mr-0 border-b border-l text-gray-800 border-gray-200 bg-white" />
-                    <button type="submit" class="px-8 rounded-r-lg bg-yellow-400  text-gray-800 font-bold p-2 uppercase border-yellow-500 border-t border-b border-r">Search</button>
-                  </form>
-                </div>
-                <a href="{{ url_for('random_meme') }}" class="text-white font-bold py-2 px-4 rounded">Random</a>
-              </div>
+    <body class="h-full">
+        <div class="min-h-full">
+            <div class="bg-indigo-600 pb-32">
+                <header class="py-10">
+                    <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+                        <div class="flex items-center justify-between">
+                            <a href="{{ url_for('index') }}">
+                                <h1
+                                    class="text-3xl font-bold tracking-tight text-white"
+                                >
+                                    Semantic Image Search
+                                </h1>
+                            </a>
+                            <div>
+                                <form
+                                    action="{{ url_for('text_query') }}"
+                                    method="get"
+                                    class="flex"
+                                >
+                                    <input
+                                        type="text"
+                                        name="text"
+                                        placeholder="Search images..."
+                                        class="mr-0 rounded-l-lg border-b border-l border-t border-gray-200 bg-white p-2 text-gray-800"
+                                    />
+                                    <button
+                                        type="submit"
+                                        class="rounded-r-lg border-b border-r border-t border-yellow-500 bg-yellow-400 p-2 px-8 font-bold uppercase text-gray-800"
+                                    >
+                                        Search
+                                    </button>
+                                </form>
+                            </div>
+                            <a
+                                href="{{ url_for('random_image') }}"
+                                class="rounded px-4 py-2 font-bold text-white"
+                                >Random</a
+                            >
+                        </div>
+                    </div>
+                </header>
             </div>
-          </header>
-      </div>
 
-      <main class="-mt-32">
-        <div class="mx-auto sm:max-w-7xl px-4 pb-12 sm:px-6 lg:px-8">
-          <div class="rounded-lg bg-white px-5 py-6 shadow sm:px-6">
-              <header class="text-6xl pb-10">
-                {% block header %}{% endblock %}
-              </header>
-              <div>
-            {% block content %}{% endblock %}
-              </div>
-          </div>
+            <main class="-mt-32">
+                <div class="mx-auto px-4 pb-12 sm:max-w-7xl sm:px-6 lg:px-8">
+                    <div class="rounded-lg bg-white px-5 py-6 shadow sm:px-6">
+                        <header class="pb-10 text-6xl">
+                            {% block header %}{% endblock %}
+                        </header>
+                        <div>{% block content %}{% endblock %}</div>
+                    </div>
+                </div>
+            </main>
         </div>
-      </main>
-    </div>
 
- {% block js %}{% endblock %}
+        {% block js %}{% endblock %}
     </body>
+</html>

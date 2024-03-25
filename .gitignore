@@ -3,3 +3,6 @@ data
 chroma
 chroma-*.log
 *.pyc
+*.pyc
+mlx_model
+.env
