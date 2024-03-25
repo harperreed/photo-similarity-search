@@ -8,7 +8,6 @@ from dotenv import load_dotenv
 import sqlite3
 import hashlib
 import requests
-from PIL import Image
 from io import BytesIO
 import signal
 from concurrent.futures import ThreadPoolExecutor
@@ -18,14 +17,23 @@ import json
 import numpy as np
 from chromadb.utils.embedding_functions import OpenCLIPEmbeddingFunction
 from chromadb.utils.data_loaders import ImageLoader
+from PIL import Image
+from typing import Tuple
+from image_processor import CLIPImageProcessor
+from model import CLIPModel
+from tokenizer import CLIPTokenizer
+
+host_name = socket.gethostname()
+unique_id = uuid.uuid5(uuid.NAMESPACE_DNS, host_name + str(uuid.getnode()))
+
 
 # Configure logging
-file_handler = RotatingFileHandler('app.log', maxBytes=10485760, backupCount=10)
+file_handler = RotatingFileHandler(f"app_{unique_id}.log", maxBytes=10485760, backupCount=10)
 file_handler.setLevel(logging.DEBUG)
 file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 file_handler.setFormatter(file_formatter)
 console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.INFO)
+console_handler.setLevel(logging.DEBUG)
 console_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 console_handler.setFormatter(console_formatter)
 logger = logging.getLogger('app')
@@ -50,6 +58,17 @@ embedding_server_url = os.getenv('EMBEDDING_SERVER')
 chroma_path = os.getenv('CHROME_PATH', "./chroma")
 chrome_collection_name = os.getenv('CHROME_COLLECTION', "images")
 
+logger.debug("Configuration loaded.")
+# Log the configuration for debugging
+logger.debug(f"Configuration - DATA_DIR: {data_path}")
+logger.debug(f"Configuration - DB_FILENAME: {sqlite_db_filename}")
+logger.debug(f"Configuration - CACHE_FILENAME: {filelist_cache_filename}")
+logger.debug(f"Configuration - IMAGE_DIRECTORY: {image_directory}")
+logger.debug(f"Configuration - EMBEDDING_SERVER: {embedding_server_url}")
+logger.debug(f"Configuration - CHROME_PATH: {chroma_path}")
+logger.debug(f"Configuration - CHROME_COLLECTION: {chrome_collection_name}")
+logger.debug("Configuration loaded.")
+
 # Append the unique ID to the db file path and cache file path
 sqlite_db_filepath = f"{data_path}{str(unique_id)}_{sqlite_db_filename}"
 filelist_cache_filepath = os.path.join(data_path, f"{unique_id}_{filelist_cache_filename}")
@@ -65,6 +84,132 @@ def graceful_shutdown(signum, frame):
 # Register the signal handlers for graceful shutdown
 signal.signal(signal.SIGINT, graceful_shutdown)
 signal.signal(signal.SIGTERM, graceful_shutdown)
+
+
+
+def load_clip_model(model_dir: str) -> Tuple[CLIPModel, CLIPTokenizer, CLIPImageProcessor]:
+    """
+    Loads the CLIP model, tokenizer, and image processor from a given directory.
+
+    Args:
+        model_dir (str): The directory where the CLIP model is stored.
+
+    Returns:
+        Tuple[CLIPModel, CLIPTokenizer, CLIPImageProcessor]: The loaded CLIP model, tokenizer, and image processor.
+    """
+    logger.info(f"Loading CLIP model from directory: {model_dir}")
+    try:
+        model = CLIPModel.from_pretrained(model_dir)
+        logger.debug("CLIP model loaded successfully.")
+    except Exception as e:
+        logger.error(f"Failed to load CLIP model: {e}")
+        raise
+
+    try:
+        tokenizer = CLIPTokenizer.from_pretrained(model_dir)
+        logger.debug("CLIP tokenizer loaded successfully.")
+    except Exception as e:
+        logger.error(f"Failed to load CLIP tokenizer: {e}")
+        raise
+
+    try:
+        img_processor = CLIPImageProcessor.from_pretrained(model_dir)
+        logger.debug("CLIP image processor loaded successfully.")
+    except Exception as e:
+        logger.error(f"Failed to load CLIP image processor: {e}")
+        raise
+
+    return model, tokenizer, img_processor
+
+# Load CLIP model, tokenizer, and image processor
+try:
+    clip_model, clip_tokenizer, clip_img_processor = load_clip_model("mlx_model")
+    logger.info("CLIP components loaded successfully.")
+except Exception as e:
+    logger.critical("Failed to load CLIP components. Terminating program.")
+    raise SystemExit(e)
+
+def clip_generate_image_embed(model: CLIPModel, img_processor: CLIPImageProcessor, image_path: str):
+    """
+    Generate an image embedding using the CLIP model.
+
+    Args:
+    - model: The CLIPModel instance loaded from a pre-trained model.
+    - tokenizer: The CLIPTokenizer instance loaded from a pre-trained model.
+    - img_processor: The CLIPImageProcessor instance loaded from a pre-trained model.
+    - image_path: Path to the image file to be processed.
+
+    Returns:
+    - A numpy array representing the embedding of the image.
+    """
+    try:
+        # Open the image file
+        image = Image.open(image_path)
+        logging.info(f"Image {image_path} opened successfully.")
+    except Exception as e:
+        logging.error(f"Error opening image {image_path}: {e}")
+        raise
+
+    try:
+        # Preprocess the image using the provided image processor
+        processed_image = img_processor([image])
+        logging.info(f"Image {image_path} processed successfully.")
+    except Exception as e:
+        logging.error(f"Error processing image {image_path}: {e}")
+        raise
+
+    try:
+        # Generate embeddings using the CLIP model
+        inputs = {"pixel_values": processed_image}
+        output = model(**inputs)
+        image_embed = output.image_embeds
+        logging.info(f"Image embedding for {image_path} generated successfully.")
+    except Exception as e:
+        logging.error(f"Error generating embedding for image {image_path}: {e}")
+        raise
+
+    # Return the first (and only) image embedding
+    return image_embed[0].tolist()
+
+def clip_generate_text_embed(
+    model: CLIPModel,
+    tokenizer: CLIPTokenizer,
+    text: str
+):
+    """
+    Generate a text embedding using the CLIP model.
+
+    Args:
+    - model: The CLIPModel instance loaded from a pre-trained model.
+    - tokenizer: The CLIPTokenizer instance loaded from a pre-trained model.
+    - text: The text string to be processed and embedded.
+
+    Returns:
+    - A numpy array representing the embedding of the text.
+
+    Raises:
+    - Exception: Propagates any exception that might occur during tokenization or embedding generation.
+    """
+    try:
+        # Tokenize the text using the provided tokenizer
+        inputs = {"input_ids": tokenizer([text])}
+        logging.info(f"Text '{text}' tokenized successfully.")
+    except Exception as e:
+        logging.error(f"Error tokenizing text '{text}': {e}")
+        raise
+
+    try:
+        # Generate embeddings using the CLIP model
+        output = model(**inputs)
+        text_embeds = output.text_embeds
+        logging.info(f"Text embedding for '{text}' generated successfully.")
+    except Exception as e:
+        logging.error(f"Error generating embedding for text '{text}': {e}")
+        raise
+
+    # Return the first (and only) text embedding
+    return text_embeds[0].tolist()
+
 
 # Create a connection pool for the SQLite database
 connection = sqlite3.connect(sqlite_db_filepath)
@@ -225,14 +370,28 @@ def process_embeddings(photo):
         logger.info(f"Photo {photo['filename']} already has embeddings. Skipping.")
         return
     start_time = time.time()
-    response = upload_embeddings(photo['file_path'])
+    imemb = clip_generate_image_embed(clip_model, clip_img_processor, "images/00003001-PHOTO-2020-10-24-10-48-21.jpg")
+
+
+    photo['embeddings'] = imemb
+    update_db(photo)
     end_time = time.time()
-    if response and response.status_code == 200:
-        photo['embeddings'] = response.json().get('embeddings', [])
-        update_db(photo)
-        logger.info(f"Grabbed embeddings for {photo['filename']} in {end_time - start_time:.2f} seconds")
-    else:
-        logger.error(f"Failed to grab embeddings for {photo['filename']}. Status code: {response.status_code if response else 'N/A'}")
+    logger.info(f"Grabbed embeddings for {photo['filename']} in {end_time - start_time:.5f} seconds")
+
+
+    # logger.info(f"Processing photo: {photo['filename']}")
+    # if photo['embeddings']:
+    #     logger.info(f"Photo {photo['filename']} already has embeddings. Skipping.")
+    #     return
+    # start_time = time.time()
+    # response = upload_embeddings(photo['file_path'])
+    # end_time = time.time()
+    # if response and response.status_code == 200:
+    #     photo['embeddings'] = response.json().get('embeddings', [])
+    #     update_db(photo)
+    #     logger.info(f"Grabbed embeddings for {photo['filename']} in {end_time - start_time:.2f} seconds")
+    # else:
+    #     logger.error(f"Failed to grab embeddings for {photo['filename']}. Status code: {response.status_code if response else 'N/A'}")
 
 def main():
     """
@@ -258,13 +417,11 @@ def main():
         for photo in photos:
             photo['embeddings'] = msgpack.loads(photo['embeddings']) if photo['embeddings'] else []
     logger.info(f"Loaded {len(photos)} photos from database")
-    with ThreadPoolExecutor() as executor:
-        futures = []
-        for photo in photos:
-            future = executor.submit(process_embeddings, photo)
-            futures.append(future)
-        for future in futures:
-            future.result()
+    start_time = time.time()
+    for photo in photos:
+        process_embeddings(photo)
+    end_time = time.time()
+    logger.info(f"Generated embeddings for {len(photos)} photos in {end_time - start_time:.2f} seconds")
     connection.close()
     logger.info("Database connection pool closed.")
 

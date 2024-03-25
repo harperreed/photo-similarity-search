@@ -3,3 +3,9 @@ open-clip-torch
 transformers
 python-dotenv
 flask
+msgpack
+mlx
+numpy
+torch
+huggingface_hub
+Pillow

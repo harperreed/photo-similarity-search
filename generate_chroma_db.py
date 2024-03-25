@@ -44,7 +44,7 @@ unique_id = uuid.uuid5(uuid.NAMESPACE_DNS, host_name + str(uuid.getnode()))
 unique_id = "f460c7cf-07f1-5306-85e3-1b9aef718dcd"
 logger.info(f"Running on machine ID: {unique_id}")
 
-# Retrieve values from .env
+# Retrieve values from .env and log the config state
 data_path = os.getenv("DATA_DIR", "./")
 sqlite_db_filename = os.getenv("DB_FILENAME", "images.db")
 filelist_cache_filename = os.getenv("CACHE_FILENAME", "filelist_cache.msgpack")
@@ -52,6 +52,15 @@ directory = os.getenv("IMAGE_DIRECTORY", "images")
 embedding_server_url = os.getenv("EMBEDDING_SERVER")
 chroma_path = os.getenv("CHROME_PATH", "./chroma")
 chrome_collection_name = os.getenv("CHROME_COLLECTION", "images")
+
+# Log the configuration for debugging
+logger.debug(f"Configuration - DATA_DIR: {data_path}")
+logger.debug(f"Configuration - DB_FILENAME: {sqlite_db_filename}")
+logger.debug(f"Configuration - CACHE_FILENAME: {filelist_cache_filename}")
+logger.debug(f"Configuration - IMAGE_DIRECTORY: {directory}")
+logger.debug(f"Configuration - EMBEDDING_SERVER: {embedding_server_url}")
+logger.debug(f"Configuration - CHROME_PATH: {chroma_path}")
+logger.debug(f"Configuration - CHROME_COLLECTION: {chrome_collection_name}")
 
 # Append the unique ID to the db file path and cache file path
 sqlite_db_filepath = f"{data_path}{str(unique_id)}_{sqlite_db_filename}"
