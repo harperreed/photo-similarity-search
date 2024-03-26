@@ -172,7 +172,7 @@ def text_query():
     text = request.args.get("text")  # Adjusted to use GET parameters
 
     # Use the MLX Clip model to generate embeddings from the text
-    embeddings = clip.generate_text_embedding(text)
+    embeddings = clip.text_encoder(text)
 
     results = collection.query(query_embeddings=embeddings, n_results=(NUM_IMAGE_RESULTS + 1))
     images = []
