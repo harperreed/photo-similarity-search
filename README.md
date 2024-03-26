@@ -1,8 +1,14 @@
-# 📸 Embed-Photos Repository
+
 
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/harperreed/embed-photos/blob/main/LICENSE)
 
 Welcome to the Embed-Photos repository! 🎉 This project showcases a semantic image search engine that leverages the power of the CLIP (Contrastive Language-Image Pre-training) model to find similar images based on textual descriptions. 🔍🖼️
+
+## Screenshot
+
+![image](https://github.com/harperreed/photo-similarity-search/assets/18504/7df51659-84b0-4efb-9647-58a544743ea5)
+
+
 
 ## 🌟 Features
 
