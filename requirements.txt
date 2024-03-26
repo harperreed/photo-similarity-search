@@ -9,3 +9,4 @@ numpy
 torch
 huggingface_hub
 Pillow
+git+https://github.com/harperreed/mlx_clip.git
