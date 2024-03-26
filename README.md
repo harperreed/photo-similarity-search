@@ -67,6 +67,12 @@ embed-photos/
 
 6. Open your web browser and navigate to `http://localhost:5000` to explore the photo similarity search!
 
+## Todo
+
+- Use siglip instead of clip
+- add a more robust config
+- make mlx optional
+
 ## 🙏 Acknowledgments
 
 The Embed-Photos project builds upon the work of the Apple (mlx!), the CLIP model and leverages various open-source libraries. We extend our gratitude to the authors and contributors of these projects.
