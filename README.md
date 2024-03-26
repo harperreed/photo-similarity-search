@@ -14,6 +14,11 @@ Welcome to Embed-Photos, a powerful photo similarity search engine built by [@ha
 - 📊 Logging and monitoring for performance analysis
 - 🔧 Configurable settings using environment variables
 
+## Screenshot
+
+![image](https://github.com/harperreed/photo-similarity-search/assets/18504/7df51659-84b0-4efb-9647-58a544743ea5)
+
+
 ## 📂 Repository Structure
 
 ```
