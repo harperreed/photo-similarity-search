@@ -18,6 +18,7 @@ from logging.handlers import RotatingFileHandler
 import msgpack
 import numpy as np
 import chromadb
+from PIL import Image
 
 import mlx_clip
 
@@ -101,8 +102,9 @@ clip = mlx_clip.mlx_clip("mlx_model")
 logger.info(f"Initializing Chrome DB:  {CHROMA_COLLECTION_NAME}")
 client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
 collection = client.get_or_create_collection(name=CHROMA_COLLECTION_NAME)
+items = collection.get()["ids"]
 
-
+print(len(items))
 # WEBS
 
 
@@ -172,7 +174,7 @@ def text_query():
     text = request.args.get("text")  # Adjusted to use GET parameters
 
     # Use the MLX Clip model to generate embeddings from the text
-    embeddings = clip.generate_text_embedding(text)
+    embeddings = clip.text_encoder(text)
 
     results = collection.query(query_embeddings=embeddings, n_results=(NUM_IMAGE_RESULTS + 1))
     images = []
@@ -190,18 +192,29 @@ def text_query():
 @app.route("/img/<path:filename>")
 def serve_image(filename):
     """
-    Serve a image directly from the filesystem outside of the static directory.
+    Serve a resized image directly from the filesystem outside of the static directory.
     """
+
+
     # Construct the full file path. Be careful with security implications.
     # Ensure that you validate `filename` to prevent directory traversal attacks.
-    print("filename", filename)
-
-    print("SOURCE_IMAGE_DIRECTORY", SOURCE_IMAGE_DIRECTORY)
     filepath = os.path.join(SOURCE_IMAGE_DIRECTORY, filename)
-    print("filepath", filepath)
     if not os.path.exists(filepath):
         # You can return a default image or a 404 error if the file does not exist.
         return "Image not found", 404
+
+    # Check the file size
+    file_size = os.path.getsize(filepath)
+    if file_size > 1 * 1024 * 1024:  # File size is greater than 1 megabyte
+        with Image.open(filepath) as img:
+            # Resize the image to half the original size
+            img.thumbnail((img.width // 2, img.height // 2))
+            # Save the resized image to a BytesIO object
+            img_io = BytesIO()
+            img.save(img_io, 'JPEG', quality=85)
+            img_io.seek(0)
+            return send_file(img_io, mimetype='image/jpeg')
+
     return send_file(filepath)
 
 

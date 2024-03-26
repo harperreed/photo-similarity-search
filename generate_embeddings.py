@@ -72,6 +72,8 @@ logger.debug("Configuration loaded.")
 SQLITE_DB_FILEPATH = f"{DATA_DIR}{str(unique_id)}_{SQLITE_DB_FILENAME}"
 FILELIST_CACHE_FILEPATH = os.path.join(DATA_DIR, f"{unique_id}_{FILELIST_CACHE_FILENAME}")
 
+
+
 # Graceful shutdown handler
 def graceful_shutdown(signum, frame):
     logger.info("Caught signal, shutting down gracefully...")
@@ -238,6 +240,12 @@ def main():
     """
     Main function to process images and embeddings.
     """
+
+    #check if data dir exists, if it doesn't - then create it
+    if not os.path.exists(DATA_DIR):
+        os.makedirs(DATA_DIR)
+
+
     cache_start_time = time.time()
     cached_files = hydrate_cache(SOURCE_IMAGE_DIRECTORY, FILELIST_CACHE_FILEPATH)
     cache_end_time = time.time()
@@ -296,7 +304,7 @@ def main():
         try:
             # Add the photo's embeddings to the Chroma collection
             item = collection.get(ids=[photo['filename']])
-            if item:
+            if item['ids'] !=[]:
                 continue
             collection.add(
                 embeddings=[photo["embeddings"]],
