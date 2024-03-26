@@ -1,18 +1,13 @@
-
+# 📸 Embed-Photos 🖼️
 
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/harperreed/embed-photos/blob/main/LICENSE)
 
-Welcome to the Embed-Photos repository! 🎉 This project showcases a semantic image search engine that leverages the power of the CLIP (Contrastive Language-Image Pre-training) model to find similar images based on textual descriptions. 🔍🖼️
-
-## Screenshot
-
-![image](https://github.com/harperreed/photo-similarity-search/assets/18504/7df51659-84b0-4efb-9647-58a544743ea5)
-
-
+Welcome to Embed-Photos, a powerful photo similarity search engine built by [@harperreed](https://github.com/harperreed)! 🎉 This project leverages the CLIP (Contrastive Language-Image Pre-training) model to find visually similar images based on textual descriptions. 🔍🖼️
 
 ## 🌟 Features
 
 - 🚀 Fast and efficient image search using the CLIP model
+- 💻 Works on Apple Silicon (MLX) only
 - 💾 Persistent storage of image embeddings using SQLite and Chroma
 - 🌐 Web interface for easy interaction and exploration
 - 🔒 Secure image serving and handling
@@ -21,35 +16,27 @@ Welcome to the Embed-Photos repository! 🎉 This project showcases a semantic i
 
 ## 📂 Repository Structure
 
-The repository is organized as follows:
-
 ```
 embed-photos/
-├── mlx_clip/
-│   ├── README.md
-│   ├── __init__.py
-│   ├── image_processor.py
-│   ├── model.py
-│   └── tokenizer.py
-├── templates/
-│   ├── base.html
-│   ├── display_image.html
-│   ├── index.html
-│   └── query_results.html
+├── README.md
 ├── generate_embeddings.py
 ├── requirements.txt
-└── start_web.py
+├── start_web.py
+└── templates
+    ├── README.md
+    ├── base.html
+    ├── display_image.html
+    ├── index.html
+    ├── output.txt
+    └── query_results.html
 ```
 
-- `mlx_clip/`: Contains the MLX_CLIP library for generating image and text embeddings.
-- `templates/`: Contains HTML templates for the web interface.
-- `generate_embeddings.py`: Script to generate image embeddings and store them in the database.
-- `requirements.txt`: Lists the required Python dependencies.
-- `start_web.py`: Starts the web application for semantic image search.
+- `generate_embeddings.py`: Script to generate image embeddings using the CLIP model
+- `requirements.txt`: Lists the required Python dependencies
+- `start_web.py`: Flask web application for the photo similarity search
+- `templates/`: Contains HTML templates for the web interface
 
 ## 🚀 Getting Started
-
-To get started with the Embed-Photos project, follow these steps:
 
 1. Clone the repository:
    ```
@@ -61,13 +48,7 @@ To get started with the Embed-Photos project, follow these steps:
    pip install -r requirements.txt
    ```
 
-3. Set up the necessary environment variables:
-   - `DATA_DIR`: Directory to store data files.
-   - `DB_FILENAME`: Name of the SQLite database file.
-   - `CACHE_FILENAME`: Name of the cache file for file list.
-   - `IMAGE_DIRECTORY`: Directory containing the images to be indexed.
-   - `CHROME_PATH`: Path to store the Chroma database.
-   - `CHROME_COLLECTION`: Name of the Chroma collection.
+3. Configure the application by setting the necessary environment variables in a `.env` file.
 
 4. Generate image embeddings:
    ```
@@ -79,18 +60,10 @@ To get started with the Embed-Photos project, follow these steps:
    python start_web.py
    ```
 
-6. Access the web interface in your browser at `http://localhost:5000`.
-
-## 🤝 Contributing
-
-Contributions to the Embed-Photos project are welcome! If you encounter any issues or have suggestions for improvements, please open an issue or submit a pull request. Make sure to follow the existing code style and provide appropriate documentation for your changes.
-
-## 📄 License
-
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for more details.
+6. Open your web browser and navigate to `http://localhost:5000` to explore the photo similarity search!
 
 ## 🙏 Acknowledgments
 
-The Embed-Photos project builds upon the work of the CLIP model and leverages various open-source libraries. We extend our gratitude to the authors and contributors of these projects.
+The Embed-Photos project builds upon the work of the Apple (mlx!), the CLIP model and leverages various open-source libraries. We extend our gratitude to the authors and contributors of these projects.
 
 Happy searching! 🔍✨
