@@ -225,7 +225,7 @@ def process_embeddings(photo):
 
     try:
         start_time = time.time()
-        imemb = clip.generate_image_embedding(photo['file_path'])
+        imemb = clip.image_encoder(photo['file_path'])
         photo['embeddings'] = imemb
         update_db(photo)
         end_time = time.time()
