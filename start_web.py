@@ -119,7 +119,7 @@ def index():
     print(NUM_IMAGE_RESULTS)
     print(len(images))
     random_items = random.sample(images, NUM_IMAGE_RESULTS)
-    print(random_items)
+    print("random",random_items)
     # Display a form or some introduction text
     return render_template("index.html", images=random_items)
 
@@ -129,12 +129,18 @@ def serve_specific_image(filename):
     # Construct the filepath and check if it exists
     print(filename)
 
-    filepath = os.path.join(SOURCE_IMAGE_DIRECTORY, filename)
-    print(filepath)
+
+    image = collection.get(ids=[filename], include=["embeddings", "metadatas"])
+
+
+    # filepath = os.path.join(SOURCE_IMAGE_DIRECTORY, filename)
+    filepath = image["metadatas"][0]["path"]
+
+
+    print(">>>>>", filepath)
     if not os.path.exists(filepath):
         return "Image not found", 404
 
-    image = collection.get(ids=[filename], include=["embeddings"])
     results = collection.query(
         query_embeddings=image["embeddings"], n_results=(NUM_IMAGE_RESULTS + 1)
     )
@@ -143,7 +149,8 @@ def serve_specific_image(filename):
     for ids in results["ids"]:
         for id in ids:
             # Adjust the path as needed
-            image_url = url_for("serve_image", filename=id)
+            image_url = url_for("serve_image", filename=filepath)
+            print("IMAGE_URL", image_url)
             images.append({"url": image_url, "id": id})
 
     # Use the proxy function to serve the image if it exists
@@ -196,8 +203,9 @@ def serve_image(filename):
     # Ensure that you validate `filename` to prevent directory traversal attacks.
     print("filename", filename)
 
-    print("SOURCE_IMAGE_DIRECTORY", SOURCE_IMAGE_DIRECTORY)
-    filepath = os.path.join(SOURCE_IMAGE_DIRECTORY, filename)
+    # print("SOURCE_IMAGE_DIRECTORY", SOURCE_IMAGE_DIRECTORY)
+    # filepath = os.path.join(SOURCE_IMAGE_DIRECTORY, filename)
+    filepath = filename
     print("filepath", filepath)
     if not os.path.exists(filepath):
         # You can return a default image or a 404 error if the file does not exist.
