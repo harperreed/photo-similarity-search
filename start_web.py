@@ -18,8 +18,7 @@ from logging.handlers import RotatingFileHandler
 import msgpack
 import numpy as np
 import chromadb
-from PIL import Image
-
+from PIL import Image, ImageOps
 import mlx_clip
 
 
@@ -209,7 +208,8 @@ def serve_image(filename):
         with Image.open(filepath) as img:
             # Resize the image to half the original size
             img.thumbnail((img.width // 2, img.height // 2))
-            # Save the resized image to a BytesIO object
+            img = ImageOps.exif_transpose(img)
+                # Save the resized image to a BytesIO object
             img_io = BytesIO()
             img.save(img_io, 'JPEG', quality=85)
             img_io.seek(0)
