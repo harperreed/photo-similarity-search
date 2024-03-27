@@ -18,8 +18,7 @@ from logging.handlers import RotatingFileHandler
 import msgpack
 import numpy as np
 import chromadb
-from PIL import Image
-
+from PIL import Image, ImageOps
 import mlx_clip
 
 
@@ -63,6 +62,7 @@ SOURCE_IMAGE_DIRECTORY = os.getenv('IMAGE_DIRECTORY', 'images')
 CHROMA_DB_PATH = os.getenv('CHROME_PATH', f"{DATA_DIR}{unique_id}_chroma")
 CHROMA_COLLECTION_NAME = os.getenv('CHROME_COLLECTION', "images")
 NUM_IMAGE_RESULTS = int(os.getenv('NUM_IMAGE_RESULTS', 52))
+CLIP_MODEL = os.getenv('CLIP_MODEL', "openai/clip-vit-base-patch32")
 
 logger.debug("Configuration loaded.")
 # Log the configuration for debugging
@@ -73,6 +73,7 @@ logger.debug(f"Configuration - SOURCE_IMAGE_DIRECTORY: {SOURCE_IMAGE_DIRECTORY}"
 logger.debug(f"Configuration - CHROME_PATH: {CHROMA_DB_PATH}")
 logger.debug(f"Configuration - CHROME_COLLECTION: {CHROMA_COLLECTION_NAME}")
 logger.debug(f"Configuration - NUM_IMAGE_RESULTS: {NUM_IMAGE_RESULTS}")
+logger.debug(f"Configuration - CLIP_MODEL: {CLIP_MODEL}")
 logger.debug("Configuration loaded.")
 
 # Append the unique ID to the db file path and cache file path
@@ -97,7 +98,7 @@ signal.signal(signal.SIGINT, graceful_shutdown)
 signal.signal(signal.SIGTERM, graceful_shutdown)
 
 #Instantiate MLX Clip model
-clip = mlx_clip.mlx_clip("mlx_model")
+clip = mlx_clip.mlx_clip("mlx_model", hf_repo=CLIP_MODEL)
 
 logger.info(f"Initializing Chrome DB:  {CHROMA_COLLECTION_NAME}")
 client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
@@ -209,7 +210,8 @@ def serve_image(filename):
         with Image.open(filepath) as img:
             # Resize the image to half the original size
             img.thumbnail((img.width // 2, img.height // 2))
-            # Save the resized image to a BytesIO object
+            img = ImageOps.exif_transpose(img)
+                # Save the resized image to a BytesIO object
             img_io = BytesIO()
             img.save(img_io, 'JPEG', quality=85)
             img_io.seek(0)
