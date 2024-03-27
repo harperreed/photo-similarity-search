@@ -127,17 +127,10 @@ def index():
 @app.route("/image/<filename>")
 def serve_specific_image(filename):
     # Construct the filepath and check if it exists
-    print(filename)
-
-
     image = collection.get(ids=[filename], include=["embeddings", "metadatas"])
 
+    filepath = os.path.join(SOURCE_IMAGE_DIRECTORY, image["metadatas"][0]["path"][1:])
 
-    # filepath = os.path.join(SOURCE_IMAGE_DIRECTORY, filename)
-    filepath = image["metadatas"][0]["path"]
-
-
-    print(">>>>>", filepath)
     if not os.path.exists(filepath):
         return "Image not found", 404
 
@@ -203,9 +196,11 @@ def serve_image(filename):
     # Ensure that you validate `filename` to prevent directory traversal attacks.
     print("filename", filename)
 
+    image = collection.get(ids=[filename], include=["embeddings", "metadatas"])
+    filepath = os.path.join(SOURCE_IMAGE_DIRECTORY, image["metadatas"][0]["path"][1:])
+
     # print("SOURCE_IMAGE_DIRECTORY", SOURCE_IMAGE_DIRECTORY)
     # filepath = os.path.join(SOURCE_IMAGE_DIRECTORY, filename)
-    filepath = filename
     print("filepath", filepath)
     if not os.path.exists(filepath):
         # You can return a default image or a 404 error if the file does not exist.

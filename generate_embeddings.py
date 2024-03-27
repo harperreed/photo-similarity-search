@@ -198,11 +198,12 @@ def process_image(file_path):
             ''', (file, file_path))
             result = cursor.fetchone()
             file_exists = result[0] if result else False
+            relative_file_path = file_path.replace(SOURCE_IMAGE_DIRECTORY, "")    
             if not file_exists:
                 cursor.execute('''
                     INSERT INTO images (filename, file_path, file_date, file_md5)
                     VALUES (?, ?, ?, ?)
-                ''', (file, file_path, file_date, file_md5))
+                ''', (file, relative_file_path, file_date, file_md5))
                 logger.debug(f'Inserted {file} with metadata into the database.')
             else:
                 logger.debug(f'File {file} already exists in the database. Skipping insertion.')
@@ -225,7 +226,7 @@ def process_embeddings(photo):
 
     try:
         start_time = time.time()
-        imemb = clip.image_encoder(photo['file_path'])
+        imemb = clip.image_encoder(os.path.join(SOURCE_IMAGE_DIRECTORY, photo['file_path'][1:]))
         photo['embeddings'] = imemb
         update_db(photo)
         end_time = time.time()
