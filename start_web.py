@@ -104,8 +104,6 @@ collection = client.get_or_create_collection(name=CHROMA_COLLECTION_NAME)
 
 
 # WEBS
-
-
 @app.teardown_appcontext
 def close_connection(exception):
     db = getattr(g, "_database", None)
@@ -116,10 +114,8 @@ def close_connection(exception):
 @app.route("/")
 def index():
     images = collection.get()["ids"]
-    print(NUM_IMAGE_RESULTS)
-    print(len(images))
     random_items = random.sample(images, NUM_IMAGE_RESULTS)
-    print("random",random_items)
+
     # Display a form or some introduction text
     return render_template("index.html", images=random_items)
 
@@ -142,8 +138,7 @@ def serve_specific_image(filename):
     for ids in results["ids"]:
         for id in ids:
             # Adjust the path as needed
-            image_url = url_for("serve_image", filename=filepath)
-            print("IMAGE_URL", image_url)
+            image_url = url_for("serve_image", filename=id)
             images.append({"url": image_url, "id": id})
 
     # Use the proxy function to serve the image if it exists
@@ -194,14 +189,10 @@ def serve_image(filename):
     """
     # Construct the full file path. Be careful with security implications.
     # Ensure that you validate `filename` to prevent directory traversal attacks.
-    print("filename", filename)
 
     image = collection.get(ids=[filename], include=["embeddings", "metadatas"])
     filepath = os.path.join(SOURCE_IMAGE_DIRECTORY, image["metadatas"][0]["path"][1:])
 
-    # print("SOURCE_IMAGE_DIRECTORY", SOURCE_IMAGE_DIRECTORY)
-    # filepath = os.path.join(SOURCE_IMAGE_DIRECTORY, filename)
-    print("filepath", filepath)
     if not os.path.exists(filepath):
         # You can return a default image or a 404 error if the file does not exist.
         return "Image not found", 404
