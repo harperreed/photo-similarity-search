@@ -91,7 +91,11 @@ signal.signal(signal.SIGTERM, graceful_shutdown)
 #Instantiate MLX Clip model
 clip = mlx_clip.mlx_clip("mlx_model", hf_repo=CLIP_MODEL)
 
-
+# Check if data dir exists, if it doesn't - then create it
+if not os.path.exists(DATA_DIR):
+    logger.info("Creating data directory ...")
+    os.makedirs(DATA_DIR)
+    
 # Create a connection pool for the SQLite database
 connection = sqlite3.connect(SQLITE_DB_FILEPATH)
 
@@ -242,12 +246,6 @@ def main():
     """
     Main function to process images and embeddings.
     """
-
-    #check if data dir exists, if it doesn't - then create it
-    if not os.path.exists(DATA_DIR):
-        os.makedirs(DATA_DIR)
-
-
     cache_start_time = time.time()
     cached_files = hydrate_cache(SOURCE_IMAGE_DIRECTORY, FILELIST_CACHE_FILEPATH)
     cache_end_time = time.time()
