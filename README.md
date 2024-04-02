@@ -27,6 +27,8 @@ embed-photos/
 ├── generate_embeddings.py
 ├── requirements.txt
 ├── start_web.py
+├── load_embeddings_into_chroma.py
+├── update_to_relative_path.py
 └── templates
     ├── README.md
     ├── base.html
@@ -66,6 +68,21 @@ embed-photos/
    ```
 
 6. Open your web browser and navigate to `http://localhost:5000` to explore the photo similarity search!
+
+
+## Moving to relative path
+Earlier version has the SOURCE_IMAGE_DIRECTORY embedded into the path in the database. To convert it to the version that supports hierarchial directory you must run these scripts. 
+
+1. Delete the chromadb directory
+2. Run 
+   ```
+   python update_to_relative_path.py
+   ```
+3. Run 
+   ```
+   python load_embeddings_into_chroma.py
+   ```
+
 
 ## Todo
 

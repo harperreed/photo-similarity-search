@@ -86,7 +86,7 @@ def replace_file_path_in_db():
             conn.execute(update_sql)
             logger.info("Successfully replaced file_path to relateive path of DATA_DIR for all images.")
     except sqlite3.Error as e:
-        logger.error(f"Failed to replace file_path to relateive path of DATA_DIR for images: {e}")
+        logger.error(f"Failed to replace file_path to relative path of DATA_DIR for images: {e}")
 
 
 
