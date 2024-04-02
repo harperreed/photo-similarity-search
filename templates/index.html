@@ -4,22 +4,27 @@
     Image Explorer
 {% endblock %}
 
-
 {% block header %}
-    <h1>Welcome to Image Explorer</h1>
+   <h1 class="text-3xl">50 random images</h1>
 {% endblock %}
 
+
 {% block content %}
-<h1 class="text-3xl">50 random images</h1>
-<div id="similar-images" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mx-auto justify-center m-10">
-
-{% for image in images %}
-
-<a href="/image/{{image}}">
-    <img class="w-64 border m-5" src="/img/{{ image }}" alt="image"  style="margin: 10px;">
-</a>
-{% endfor %}
+<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+    {% for image in images %}
+    <a href="/image/{{image}}">
+        <div
+            class="bg-card text-card-foreground rounded-lg border shadow-sm"
+            data-v0-t="card"
+        >
+        <img  class="h-48 w-full object-cover"
+        style="aspect-ratio: 400 / 300; object-fit: cover" src="/img/{{ image }}" alt="image" />
+        </div>
+    </a>
+    {% endfor %}
 </div>
+
+
 {% endblock %}
 
 {% block js %}

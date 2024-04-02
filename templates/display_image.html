@@ -1,12 +1,12 @@
-{% extends 'base.html' %} {% block title %} Display Image {% endblock %} {% block
-header %}
-{% endblock %} {% block content %}
+{% extends 'base.html' %} {% block title %} Display Image {% endblock %} {%
+block header %} {% endblock %} {% block content %}
 <img
-    class="mx-auto block w-full rounded border shadow sm:w-1/3"
+    class="mx-auto block w-full rounded rounded-lg border shadow-xl sm:w-1/2"
     src="{{ image }}"
     alt="image"
     id="image"
 />
+</div>
 <script>
     if (navigator.share) {
         document.write(`
@@ -33,15 +33,19 @@ header %}
 </script>
 <br />
 
-<h2>Similar Images</h2>
+<h2 class="text-3xl">50 Similar Images</h2>
+
 <hr />
-<div
-    id="similar-images"
-    class="m-10 mx-auto grid grid-cols-1 justify-center gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
->
+<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
     {% for image in images %}
     <a href="/image/{{image.id}}">
-        <img class="w-64 border" src="{{ image.url }}" alt="image" />
+        <div
+            class="bg-card text-card-foreground rounded-lg border shadow-sm"
+            data-v0-t="card"
+        >
+        <img  class="h-48 w-full object-cover"
+        style="aspect-ratio: 400 / 300; object-fit: cover" src="{{ image.url }}" alt="image" />
+        </div>
     </a>
     {% endfor %}
 </div>

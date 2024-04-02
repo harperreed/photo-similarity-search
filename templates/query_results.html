@@ -4,22 +4,20 @@
 
 
 {% block header %}
-<h1>Results for {{text}}</h1>
+<h1 class="text-3xl">Results for {{text}}</h1>
 {% endblock %}
 
 {% block content %}
-<div
-    id="similar-images"
-    class="m-10 mx-auto grid grid-cols-1 justify-center gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4"
->
+<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
     {% for image in images %}
     <a href="/image/{{image.id}}">
-        <img
-            class="w-64 border"
-            src="{{ image.url }}"
-            alt="image"
-            style="margin: 10px"
-        />
+        <div
+            class="bg-card text-card-foreground rounded-lg border shadow-sm"
+            data-v0-t="card"
+        >
+        <img  class="h-48 w-full object-cover"
+        style="aspect-ratio: 400 / 300; object-fit: cover" src="{{ image.url }}" alt="image" />
+        </div>
     </a>
     {% endfor %}
 </div>
