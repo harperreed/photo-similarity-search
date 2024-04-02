@@ -81,12 +81,21 @@ def replace_file_path_in_db():
         with sqlite3.connect(SQLITE_DB_FILEPATH) as conn:
             # Prepare the SQL statement for updating the file_path
             update_sql = "UPDATE images SET file_path = REPLACE(file_path, '{}', '')".format(SOURCE_IMAGE_DIRECTORY)
-            print(update_sql)
             # Execute the update statement, replacing DATA_DIR with an empty string
             conn.execute(update_sql)
             logger.info("Successfully replaced file_path to relateive path of DATA_DIR for all images.")
     except sqlite3.Error as e:
         logger.error(f"Failed to replace file_path to relative path of DATA_DIR for images: {e}")
+
+    try:
+        with sqlite3.connect(CHROMA_DB_PATH+"/chroma.sqlite3") as conn:
+            # Prepare the SQL statement for updating chromadb
+            update_chroma_sql = "update embedding_metadata set string_value = REPLACE(string_value, '{}', '') where key = 'path'".format(SOURCE_IMAGE_DIRECTORY)
+            print(update_chroma_sql)
+            conn.execute(update_chroma_sql)
+            logger.info("Successfully replaced chromadb metadata path")
+    except sqlite3.Error as e:
+        logger.error(f"Failed to replace chromadb metadata path: {e}")    
 
 
 
@@ -96,6 +105,5 @@ def main():
     replace_file_path_in_db()
 
     
-
 if __name__ == "__main__":
     main()
