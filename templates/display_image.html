@@ -1,11 +1,10 @@
-{% extends 'base.html' %} {% block title %} Display Meme {% endblock %} {% block
+{% extends 'base.html' %} {% block title %} Display Image {% endblock %} {% block
 header %}
-<h1>Display Image</h1>
 {% endblock %} {% block content %}
 <img
     class="mx-auto block w-full rounded border shadow sm:w-1/3"
     src="{{ image }}"
-    alt="meme"
+    alt="image"
     id="image"
 />
 <script>
@@ -19,12 +18,12 @@ header %}
 </script>
 
 <script>
-    function shareMeme() {
+    function shareImage() {
         if (navigator.share) {
             navigator
                 .share({
-                    // title: 'Check out this meme!',
-                    // text: 'I found a funny meme to share with you!',
+                    // title: 'Check out this image!',
+                    // text: 'I found a funny image to share with you!',
                     url: document.getElementById("image").src,
                 })
                 .then(() => console.log("Successful share"))
@@ -34,7 +33,7 @@ header %}
 </script>
 <br />
 
-<h2>Find Similar Memes</h2>
+<h2>Similar Images</h2>
 <hr />
 <div
     id="similar-images"
@@ -42,7 +41,7 @@ header %}
 >
     {% for image in images %}
     <a href="/image/{{image.id}}">
-        <img class="w-64 border" src="{{ image.url }}" alt="meme" />
+        <img class="w-64 border" src="{{ image.url }}" alt="image" />
     </a>
     {% endfor %}
 </div>

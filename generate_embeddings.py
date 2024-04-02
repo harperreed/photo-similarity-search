@@ -57,6 +57,7 @@ FILELIST_CACHE_FILENAME = os.getenv('CACHE_FILENAME', 'filelist_cache.msgpack')
 SOURCE_IMAGE_DIRECTORY = os.getenv('IMAGE_DIRECTORY', 'images')
 CHROMA_DB_PATH = os.getenv('CHROME_PATH', f"{DATA_DIR}/{unique_id}_chroma")
 CHROMA_COLLECTION_NAME = os.getenv('CHROME_COLLECTION', "images")
+CLIP_MODEL = os.getenv('CLIP_MODEL', "openai/clip-vit-base-patch32")
 
 logger.debug("Configuration loaded.")
 # Log the configuration for debugging
@@ -66,11 +67,14 @@ logger.debug(f"Configuration - CACHE_FILENAME: {FILELIST_CACHE_FILENAME}")
 logger.debug(f"Configuration - IMAGE_DIRECTORY: {SOURCE_IMAGE_DIRECTORY}")
 logger.debug(f"Configuration - CHROME_PATH: {CHROMA_DB_PATH}")
 logger.debug(f"Configuration - CHROME_COLLECTION: {CHROMA_COLLECTION_NAME}")
+logger.debug(f"Configuration - CLIP_MODEL: {CLIP_MODEL}")
 logger.debug("Configuration loaded.")
 
 # Append the unique ID to the db file path and cache file path
 SQLITE_DB_FILEPATH = f"{DATA_DIR}{str(unique_id)}_{SQLITE_DB_FILENAME}"
 FILELIST_CACHE_FILEPATH = os.path.join(DATA_DIR, f"{unique_id}_{FILELIST_CACHE_FILENAME}")
+
+
 
 # Graceful shutdown handler
 def graceful_shutdown(signum, frame):
@@ -85,7 +89,7 @@ signal.signal(signal.SIGINT, graceful_shutdown)
 signal.signal(signal.SIGTERM, graceful_shutdown)
 
 #Instantiate MLX Clip model
-clip = mlx_clip.mlx_clip("mlx_model")
+clip = mlx_clip.mlx_clip("mlx_model", hf_repo=CLIP_MODEL)
 
 
 # Create a connection pool for the SQLite database
@@ -239,6 +243,12 @@ def main():
     """
     Main function to process images and embeddings.
     """
+
+    #check if data dir exists, if it doesn't - then create it
+    if not os.path.exists(DATA_DIR):
+        os.makedirs(DATA_DIR)
+
+
     cache_start_time = time.time()
     cached_files = hydrate_cache(SOURCE_IMAGE_DIRECTORY, FILELIST_CACHE_FILEPATH)
     cache_end_time = time.time()
@@ -297,7 +307,7 @@ def main():
         try:
             # Add the photo's embeddings to the Chroma collection
             item = collection.get(ids=[photo['filename']])
-            if item:
+            if item['ids'] !=[]:
                 continue
             collection.add(
                 embeddings=[photo["embeddings"]],
