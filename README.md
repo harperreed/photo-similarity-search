@@ -1,6 +1,6 @@
 # 📸 Embed-Photos 🖼️
 
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/harperreed/embed-photos/blob/main/LICENSE)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 Welcome to Embed-Photos, a powerful photo similarity search engine built by [@harperreed](https://github.com/harperreed)! 🎉 This project leverages the CLIP (Contrastive Language-Image Pre-training) model to find visually similar images based on textual descriptions. 🔍🖼️
 
