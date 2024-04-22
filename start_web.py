@@ -26,7 +26,6 @@ import mlx_clip
 # Generate unique ID for the machine
 host_name = socket.gethostname()
 unique_id = uuid.uuid5(uuid.NAMESPACE_DNS, host_name + str(uuid.getnode()))
-unique_id = "a9d9bc7f-1ff4-5b40-b9d2-db08cad7a42e"
 
 # Configure logging
 log_app_name = "web"
