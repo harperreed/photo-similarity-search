@@ -45,7 +45,7 @@ embed-photos/
 
 1. Clone the repository:
    ```
-   git clone https://github.com/harperreed/embed-photos.git
+   git clone https://github.com/harperreed/photo-similarity-search.git
    ```
 
 2. Install the required dependencies:
