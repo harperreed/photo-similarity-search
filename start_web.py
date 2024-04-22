@@ -26,6 +26,7 @@ import mlx_clip
 # Generate unique ID for the machine
 host_name = socket.gethostname()
 unique_id = uuid.uuid5(uuid.NAMESPACE_DNS, host_name + str(uuid.getnode()))
+# unique_id = "47b92bb2-9105-590c-9846-6139abf53870"
 
 # Configure logging
 log_app_name = "web"
@@ -61,7 +62,7 @@ FILELIST_CACHE_FILENAME = os.getenv('CACHE_FILENAME', 'filelist_cache.msgpack')
 SOURCE_IMAGE_DIRECTORY = os.getenv('IMAGE_DIRECTORY', 'images')
 CHROMA_DB_PATH = os.getenv('CHROME_PATH', f"{DATA_DIR}{unique_id}_chroma")
 CHROMA_COLLECTION_NAME = os.getenv('CHROME_COLLECTION', "images")
-NUM_IMAGE_RESULTS = int(os.getenv('NUM_IMAGE_RESULTS', 52))
+NUM_IMAGE_RESULTS = int(os.getenv('NUM_IMAGE_RESULTS', 10))
 CLIP_MODEL = os.getenv('CLIP_MODEL', "openai/clip-vit-base-patch32")
 
 logger.debug("Configuration loaded.")
@@ -82,6 +83,7 @@ FILELIST_CACHE_FILEPATH = os.path.join(DATA_DIR, f"{unique_id}_{FILELIST_CACHE_F
 
 # Create a connection pool for the SQLite database
 connection = sqlite3.connect(SQLITE_DB_FILEPATH)
+
 
 app = Flask(__name__)
 
@@ -109,6 +111,31 @@ print(len(items))
 # WEBS
 
 
+def get_file_path_from_db(filename):
+    """
+    Fetch the full file path from the database for a given filename.
+    
+    :param filename: The name of the file to look up.
+    :return: The full file path of the file, or None if not found.
+    """
+    # establish connection to database:
+    conn = sqlite3.connect(SQLITE_DB_FILEPATH)
+    cursor = conn.cursor()
+    
+    # Define a SQL query to retrieve the file_path from the 'images' table
+    query = "SELECT filename, file_path, file_date, file_md5, embeddings FROM images"
+    cursor.execute(query)
+    
+    # Fetch all the results
+    file_info = cursor.fetchall()
+    for file_info_tuple in file_info:
+        if filename == file_info_tuple[0]:
+            return file_info_tuple[1]  # return real file path
+
+    cursor.close()
+    conn.close()
+    
+
 @app.teardown_appcontext
 def close_connection(exception):
     db = getattr(g, "_database", None)
@@ -120,9 +147,9 @@ def close_connection(exception):
 def index():
     images = collection.get()["ids"]
     print(NUM_IMAGE_RESULTS)
-    print(len(images))
+    print("len of images:",len(images))
     random_items = random.sample(images, NUM_IMAGE_RESULTS)
-    print(random_items)
+    print("random_items:", random_items)
     # Display a form or some introduction text
     return render_template("index.html", images=random_items)
 
@@ -131,8 +158,7 @@ def index():
 def serve_specific_image(filename):
     # Construct the filepath and check if it exists
     print(filename)
-
-    filepath = os.path.join(SOURCE_IMAGE_DIRECTORY, filename)
+    filepath = get_file_path_from_db(filename)
     print(filepath)
     if not os.path.exists(filepath):
         return "Image not found", 404
@@ -150,7 +176,7 @@ def serve_specific_image(filename):
             images.append({"url": image_url, "id": id})
 
     # Use the proxy function to serve the image if it exists
-    image_url = url_for("serve_image", filename=filename)
+    #image_url = url_for("serve_image", filename=filename)
 
     # Render the template with the specific image
     return render_template("display_image.html", image=image_url, images=images[1:])
@@ -177,7 +203,8 @@ def text_query():
     # Use the MLX Clip model to generate embeddings from the text
     embeddings = clip.text_encoder(text)
 
-    results = collection.query(query_embeddings=embeddings, n_results=(NUM_IMAGE_RESULTS + 1))
+    #results = collection.query(query_embeddings=embeddings, n_results=(NUM_IMAGE_RESULTS + 1))
+    results = collection.query(query_embeddings=embeddings, n_results=NUM_IMAGE_RESULTS)
     images = []
     for ids in results["ids"]:
         for id in ids:
@@ -199,7 +226,9 @@ def serve_image(filename):
 
     # Construct the full file path. Be careful with security implications.
     # Ensure that you validate `filename` to prevent directory traversal attacks.
-    filepath = os.path.join(SOURCE_IMAGE_DIRECTORY, filename)
+
+    # use absolute file path in database:
+    filepath = get_file_path_from_db(filename)
     if not os.path.exists(filepath):
         # You can return a default image or a 404 error if the file does not exist.
         return "Image not found", 404
@@ -221,4 +250,4 @@ def serve_image(filename):
 
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0")
+    app.run(debug=True, host="0.0.0.0", port=5006)
